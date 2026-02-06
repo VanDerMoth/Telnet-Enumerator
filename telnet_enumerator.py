@@ -783,6 +783,8 @@ class TelnetEnumeratorGUI:
         self.result_queue = queue.Queue()
         self.scan_results = []  # Store all scan results
         self.files_viewed_data = []  # Store all files viewed across all scans
+        self.unfiltered_file_data = []  # Store unfiltered file data for filtering
+        self._file_data_map = {}  # Map tree item IDs to file data
         self.is_scanning = False
         
         # Options for scanning
@@ -937,13 +939,103 @@ class TelnetEnumeratorGUI:
                                                       wrap=tk.WORD, font=('Courier', 9))
         self.results_text.pack(fill=tk.BOTH, expand=True)
         
-        # Files viewed tab
+        # Files viewed tab - Enhanced file/folder/path viewer
         files_viewed_frame = ttk.Frame(self.notebook)
         self.notebook.add(files_viewed_frame, text="Files Viewed")
         
-        self.files_text = scrolledtext.ScrolledText(files_viewed_frame, width=90, height=25, 
+        # Create PanedWindow for split view
+        files_paned = ttk.PanedWindow(files_viewed_frame, orient=tk.HORIZONTAL)
+        files_paned.pack(fill=tk.BOTH, expand=True)
+        
+        # Left panel: File tree with search/filter
+        left_frame = ttk.Frame(files_paned)
+        files_paned.add(left_frame, weight=1)
+        
+        # Search/Filter controls
+        search_frame = ttk.Frame(left_frame)
+        search_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(search_frame, text="Filter:").pack(side=tk.LEFT)
+        self.file_filter_var = tk.StringVar()
+        self.file_filter_var.trace('w', lambda *args: self.filter_file_tree())
+        filter_entry = ttk.Entry(search_frame, textvariable=self.file_filter_var)
+        filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        # Clear filter button
+        ttk.Button(search_frame, text="Clear", width=8, 
+                   command=lambda: self.file_filter_var.set("")).pack(side=tk.LEFT)
+        
+        # Status filter dropdown
+        ttk.Label(search_frame, text="Status:").pack(side=tk.LEFT, padx=(10, 0))
+        self.status_filter_var = tk.StringVar(value="All")
+        status_combo = ttk.Combobox(search_frame, textvariable=self.status_filter_var, 
+                                    values=["All", "Success", "Error", "Not Found"], 
+                                    state="readonly", width=12)
+        status_combo.pack(side=tk.LEFT, padx=5)
+        status_combo.bind('<<ComboboxSelected>>', lambda e: self.filter_file_tree())
+        
+        # Tree frame with scrollbar
+        tree_frame = ttk.Frame(left_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # File tree with columns
+        columns = ('status', 'size', 'target')
+        self.file_tree = ttk.Treeview(tree_frame, columns=columns, show='tree headings')
+        
+        # Configure columns
+        self.file_tree.heading('#0', text='Path', anchor=tk.W)
+        self.file_tree.heading('status', text='Status', anchor=tk.CENTER)
+        self.file_tree.heading('size', text='Size', anchor=tk.E)
+        self.file_tree.heading('target', text='Target', anchor=tk.W)
+        
+        self.file_tree.column('#0', width=300, minwidth=200)
+        self.file_tree.column('status', width=80, minwidth=60)
+        self.file_tree.column('size', width=80, minwidth=60)
+        self.file_tree.column('target', width=150, minwidth=100)
+        
+        # Scrollbars for tree
+        tree_vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.file_tree.yview)
+        tree_hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.file_tree.xview)
+        self.file_tree.configure(yscrollcommand=tree_vsb.set, xscrollcommand=tree_hsb.set)
+        
+        # Grid layout for tree and scrollbars
+        self.file_tree.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
+        tree_vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        tree_hsb.grid(row=1, column=0, sticky=(tk.E, tk.W))
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+        
+        # Configure tags for status colors
+        self.file_tree.tag_configure('success', foreground='#006400')  # Dark green
+        self.file_tree.tag_configure('error', foreground='#B22222')  # Fire brick red
+        self.file_tree.tag_configure('notfound', foreground='#FF8C00')  # Dark orange
+        self.file_tree.tag_configure('folder', font=('TkDefaultFont', 9, 'bold'))
+        
+        # Bind selection event
+        self.file_tree.bind('<<TreeviewSelect>>', self.on_file_selected)
+        
+        # Right panel: File content viewer
+        right_frame = ttk.Frame(files_paned)
+        files_paned.add(right_frame, weight=2)
+        
+        # Content header
+        content_header = ttk.Frame(right_frame)
+        content_header.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(content_header, text="File Content:", 
+                  font=('TkDefaultFont', 10, 'bold')).pack(side=tk.LEFT)
+        
+        self.content_info_label = ttk.Label(content_header, text="Select a file to view", 
+                                           foreground='gray')
+        self.content_info_label.pack(side=tk.LEFT, padx=10)
+        
+        # Content viewer with scrollbar
+        self.files_text = scrolledtext.ScrolledText(right_frame, width=50, height=25, 
                                                     wrap=tk.WORD, font=('Courier', 9))
-        self.files_text.pack(fill=tk.BOTH, expand=True)
+        self.files_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Store unfiltered data for filtering
+        self.unfiltered_file_data = []
         
         # Status bar
         self.status_var = tk.StringVar()
@@ -1316,48 +1408,229 @@ class TelnetEnumeratorGUI:
         self.update_files_tab()
     
     def update_files_tab(self):
-        """Update the Files Viewed tab with all viewed files"""
+        """Update the Files Viewed tab with hierarchical file tree and content viewer"""
+        # Clear existing tree
+        for item in self.file_tree.get_children():
+            self.file_tree.delete(item)
+        
+        # Clear content viewer
+        self.files_text.delete(1.0, tk.END)
+        self.content_info_label.config(text="Select a file to view")
+        
         if not self.files_viewed_data:
-            self.files_text.delete(1.0, tk.END)
             self.files_text.insert(tk.END, "No files have been viewed yet.\n\n")
             self.files_text.insert(tk.END, "Enable 'View Files' and 'Test Common Credentials' options\n")
             self.files_text.insert(tk.END, "to automatically view files when valid credentials are found.")
             return
         
+        # Store unfiltered data
+        self.unfiltered_file_data = list(self.files_viewed_data)
+        
+        # Build hierarchical tree structure
+        self._populate_file_tree(self.files_viewed_data)
+    
+    def _populate_file_tree(self, file_data_list):
+        """Populate the file tree with hierarchical structure"""
+        # Group files by target and directory
+        tree_structure = {}
+        
+        for file_data in file_data_list:
+            target = f"{file_data['ip']}:{file_data['port']}"
+            file_path = file_data['file_info']['path']
+            
+            # Initialize target if not exists
+            if target not in tree_structure:
+                tree_structure[target] = {}
+            
+            # Parse file path into directory components
+            if file_path.startswith('/'):
+                # Unix-like path
+                parts = file_path.split('/')
+            elif len(file_path) > 2 and file_path[1] == ':':
+                # Windows path
+                parts = file_path.replace('\\', '/').split('/')
+            else:
+                # Relative path
+                parts = file_path.replace('\\', '/').split('/')
+            
+            # Build nested structure
+            current_level = tree_structure[target]
+            for i, part in enumerate(parts[:-1]):
+                if part == '':
+                    part = '/' if i == 0 else part
+                if part not in current_level:
+                    current_level[part] = {}
+                current_level = current_level[part]
+            
+            # Add the file at the leaf
+            filename = parts[-1]
+            current_level[filename] = file_data
+        
+        # Populate tree widget
+        for target, dirs in sorted(tree_structure.items()):
+            # Add target as root node
+            target_node = self.file_tree.insert('', 'end', text=target, 
+                                                tags=('folder',), open=True)
+            self._add_tree_nodes(target_node, dirs)
+    
+    def _add_tree_nodes(self, parent, structure):
+        """Recursively add nodes to the tree"""
+        for name, content in sorted(structure.items()):
+            if isinstance(content, dict) and not content.get('file_info'):
+                # This is a directory
+                node = self.file_tree.insert(parent, 'end', text=name, 
+                                            tags=('folder',), open=False)
+                self._add_tree_nodes(node, content)
+            else:
+                # This is a file
+                file_info = content['file_info']
+                
+                # Determine status
+                if file_info.get('content'):
+                    status = '✓ Success'
+                    status_tag = 'success'
+                    size = f"{file_info.get('size', 0)} B"
+                elif file_info.get('error'):
+                    if 'not found' in file_info['error'].lower() or 'no such file' in file_info['error'].lower():
+                        status = '✗ Not Found'
+                        status_tag = 'notfound'
+                    else:
+                        status = '✗ Error'
+                        status_tag = 'error'
+                    size = '-'
+                else:
+                    status = '? Unknown'
+                    status_tag = 'error'
+                    size = '-'
+                
+                target_str = f"{content['ip']}:{content['port']}"
+                
+                # Insert file node with data
+                node = self.file_tree.insert(parent, 'end', text=name,
+                                            values=(status, size, target_str),
+                                            tags=(status_tag,))
+                # Store file data in item for retrieval on selection
+                self.file_tree.set(node, '#0', name)
+                # Store the full file data as a tag (we'll use item ID to lookup)
+                if not hasattr(self, '_file_data_map'):
+                    self._file_data_map = {}
+                self._file_data_map[node] = content
+    
+    def on_file_selected(self, event):
+        """Handle file selection in tree"""
+        selection = self.file_tree.selection()
+        if not selection:
+            return
+        
+        item_id = selection[0]
+        
+        # Check if this is a file (not a folder)
+        if not hasattr(self, '_file_data_map') or item_id not in self._file_data_map:
+            # It's a folder, clear content
+            self.files_text.delete(1.0, tk.END)
+            self.files_text.insert(tk.END, "Select a file to view its content.")
+            self.content_info_label.config(text="Folder selected")
+            return
+        
+        file_data = self._file_data_map[item_id]
+        file_info = file_data['file_info']
+        
+        # Update content viewer
+        self.files_text.delete(1.0, tk.END)
+        
+        # Display file metadata
         output = []
         output.append("=" * 80)
-        output.append("FILES VIEWED FROM TELNET SERVERS")
+        output.append("FILE DETAILS")
         output.append("=" * 80)
-        output.append(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        output.append(f"Total Files:  {len(self.files_viewed_data)}")
-        output.append("=" * 80)
-        output.append("")
+        output.append(f"Target:          {file_data['ip']}:{file_data['port']}")
+        output.append(f"Credentials:     {file_data['username']}:{file_data['password']}")
+        output.append(f"Timestamp:       {file_data['timestamp']}")
+        output.append(f"File Path:       {file_info['path']}")
         
-        for idx, file_data in enumerate(self.files_viewed_data, 1):
-            output.append(f"\n[File {idx}/{len(self.files_viewed_data)}]")
+        if file_info.get('content'):
+            output.append(f"File Size:       {file_info.get('size', 0)} bytes")
+            output.append(f"Status:          ✓ Successfully retrieved")
+            output.append("=" * 80)
+            output.append("\nFILE CONTENT:")
             output.append("-" * 80)
-            output.append(f"Target:          {file_data['ip']}:{file_data['port']}")
-            output.append(f"Credentials:     {file_data['username']}:{file_data['password']}")
-            output.append(f"Timestamp:       {file_data['timestamp']}")
-            output.append(f"File Path:       {file_data['file_info']['path']}")
-            
-            if file_data['file_info'].get('content'):
-                output.append(f"File Size:       {file_data['file_info'].get('size', 0)} bytes")
-                output.append("\nFile Content:")
-                output.append("." * 80)
-                output.append(file_data['file_info']['content'])
-                output.append("." * 80)
-            elif file_data['file_info'].get('error'):
-                output.append(f"Error:           {file_data['file_info']['error']}")
-            
+            output.append(file_info['content'])
             output.append("-" * 80)
+            
+            self.content_info_label.config(
+                text=f"{file_info['path']} ({file_info.get('size', 0)} bytes)",
+                foreground='green'
+            )
+        elif file_info.get('error'):
+            output.append(f"Status:          ✗ Error")
+            output.append(f"Error Message:   {file_info['error']}")
+            output.append("=" * 80)
+            
+            self.content_info_label.config(
+                text=f"{file_info['path']} - Error",
+                foreground='red'
+            )
+        else:
+            output.append(f"Status:          ? Unknown")
+            output.append("=" * 80)
+            
+            self.content_info_label.config(
+                text=f"{file_info['path']} - Unknown status",
+                foreground='orange'
+            )
         
-        output.append("")
-        
-        # Clear and update the files tab
-        self.files_text.delete(1.0, tk.END)
         self.files_text.insert(tk.END, "\n".join(output))
-        self.files_text.see(1.0)  # Scroll to top
+        self.files_text.see(1.0)
+    
+    def filter_file_tree(self):
+        """Filter the file tree based on search text and status"""
+        filter_text = self.file_filter_var.get().lower()
+        status_filter = self.status_filter_var.get()
+        
+        # Apply filters to the data
+        filtered_data = []
+        for file_data in self.unfiltered_file_data:
+            file_path = file_data['file_info']['path']
+            file_info = file_data['file_info']
+            
+            # Check text filter
+            if filter_text and filter_text not in file_path.lower():
+                continue
+            
+            # Check status filter
+            if status_filter != "All":
+                if status_filter == "Success" and not file_info.get('content'):
+                    continue
+                elif status_filter == "Error":
+                    if not file_info.get('error'):
+                        continue
+                    if 'not found' in file_info.get('error', '').lower():
+                        continue
+                elif status_filter == "Not Found":
+                    if not file_info.get('error'):
+                        continue
+                    if 'not found' not in file_info.get('error', '').lower():
+                        continue
+            
+            filtered_data.append(file_data)
+        
+        # Clear and repopulate tree
+        for item in self.file_tree.get_children():
+            self.file_tree.delete(item)
+        
+        if not hasattr(self, '_file_data_map'):
+            self._file_data_map = {}
+        else:
+            self._file_data_map.clear()
+        
+        if filtered_data:
+            self._populate_file_tree(filtered_data)
+        else:
+            # Show "no results" message in content viewer
+            self.files_text.delete(1.0, tk.END)
+            self.files_text.insert(tk.END, "No files match the current filter.")
+            self.content_info_label.config(text="No matching files")
+    
     
     def append_result(self, text: str):
         """Append text to results area"""
@@ -1370,9 +1643,17 @@ class TelnetEnumeratorGUI:
         self.files_text.delete(1.0, tk.END)
         self.scan_results = []
         self.files_viewed_data = []
+        self.unfiltered_file_data = []
+        self._file_data_map.clear()
+        
+        # Clear the file tree
+        for item in self.file_tree.get_children():
+            self.file_tree.delete(item)
+        
         self.progress_bar['value'] = 0
         self.progress_label.config(text="0/0")
         self.status_var.set("Ready")
+        self.content_info_label.config(text="Select a file to view")
         self.update_files_tab()  # Reset the files tab to show "no files" message
     
     def export_results(self):
