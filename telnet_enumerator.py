@@ -22,13 +22,6 @@ class TelnetEnumerator:
     def __init__(self):
         self.default_port = 23
         self.timeout = 3
-        self.service_signatures = {
-            'telnet': ['telnet', 'login:', 'username:', 'password:'],
-            'ssh': ['SSH', 'OpenSSH'],
-            'ftp': ['FTP', '220'],
-            'smtp': ['SMTP', '220'],
-            'http': ['HTTP', 'Server:'],
-        }
     
     def check_telnet(self, ip_address: str, port: int = 23) -> dict:
         """
@@ -48,7 +41,6 @@ class TelnetEnumerator:
             'banner': None,
             'error': None,
             'response_time': None,
-            'service': 'unknown',
             'timestamp': datetime.now().isoformat()
         }
         
@@ -72,7 +64,6 @@ class TelnetEnumerator:
                     banner = sock.recv(1024).decode('utf-8', errors='ignore').strip()
                     if banner:
                         result['banner'] = banner
-                        result['service'] = self.identify_service(banner)
                 except Exception as e:
                     result['error'] = f"Banner grab failed: {str(e)}"
             else:
@@ -91,19 +82,13 @@ class TelnetEnumerator:
             result['error'] = str(e)
         
         return result
-    
-    def identify_service(self, banner: str) -> str:
-        """Identify service type based on banner"""
-        banner_lower = banner.lower()
-        for service, signatures in self.service_signatures.items():
-            for signature in signatures:
-                if signature.lower() in banner_lower:
-                    return service
-        return 'unknown'
 
 
 class TelnetEnumeratorGUI:
     """GUI interface for Telnet Enumerator"""
+    
+    # Constants
+    MAX_BANNER_LINES = 10
     
     def __init__(self, root):
         self.root = root
@@ -276,19 +261,13 @@ class TelnetEnumeratorGUI:
             is_cidr = '/' in ip_address
             
             if is_cidr:
-                # IP range scanning
+                # IP range scanning with CIDR
                 try:
                     network = ipaddress.ip_network(ip_address, strict=False)
-                    total_scans = network.num_addresses - 2  # Exclude network and broadcast
-                    if total_scans < 1:
-                        total_scans = 1
-                except:
-                    total_scans = 1
-                
-                self.result_queue.put(('progress', 0, total_scans))
-                
-                try:
-                    network = ipaddress.ip_network(ip_address, strict=False)
+                    # Handle different network sizes including /31 and /32
+                    total_scans = max(1, network.num_addresses - 2)
+                    self.result_queue.put(('progress', 0, total_scans))
+                    
                     for ip in network.hosts():
                         if not self.is_scanning:
                             break
@@ -296,8 +275,11 @@ class TelnetEnumeratorGUI:
                         results.append(result)
                         completed_scans += 1
                         self.result_queue.put(('progress', completed_scans, total_scans))
-                except ValueError:
-                    # Not a valid CIDR, treat as single IP
+                        
+                except ValueError as e:
+                    # Invalid CIDR notation, treat as single IP
+                    total_scans = 1
+                    self.result_queue.put(('progress', 0, total_scans))
                     result = self.enumerator.check_telnet(ip_address, port)
                     results.append(result)
                     completed_scans += 1
@@ -388,7 +370,6 @@ class TelnetEnumeratorGUI:
                 output.append(f"Response Time:   {result['response_time']} ms")
             
             if result['status'] == 'open':
-                output.append(f"Service:         {result['service']}")
                 output.append("")
                 output.append("✓ PORT IS OPEN")
                 
@@ -397,10 +378,10 @@ class TelnetEnumeratorGUI:
                     output.append("." * 80)
                     # Split banner into lines for better display
                     banner_lines = result['banner'].split('\n')
-                    for line in banner_lines[:10]:  # Limit to 10 lines
+                    for line in banner_lines[:self.MAX_BANNER_LINES]:
                         output.append(f"  {line}")
-                    if len(banner_lines) > 10:
-                        output.append(f"  ... ({len(banner_lines) - 10} more lines)")
+                    if len(banner_lines) > self.MAX_BANNER_LINES:
+                        output.append(f"  ... ({len(banner_lines) - self.MAX_BANNER_LINES} more lines)")
                     output.append("." * 80)
                 else:
                     output.append("\nNo banner received (service may not send initial banner)")
@@ -485,14 +466,13 @@ class TelnetEnumeratorGUI:
                 with open(filename, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(['IP Address', 'Port', 'Status', 'Response Time (ms)', 
-                                   'Service', 'Banner', 'Error', 'Timestamp'])
+                                   'Banner', 'Error', 'Timestamp'])
                     for result in self.scan_results:
                         writer.writerow([
                             result['ip'],
                             result['port'],
                             result['status'],
                             result.get('response_time', 'N/A'),
-                            result.get('service', 'N/A'),
                             result.get('banner', 'N/A'),
                             result.get('error', 'N/A'),
                             result.get('timestamp', 'N/A')

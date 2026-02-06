@@ -6,8 +6,7 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 
 - 🖥️ **User-Friendly GUI**: Built with tkinter for easy cross-platform use
 - 🔍 **IP Range Scanning**: Scan multiple IPs using CIDR notation (e.g., 192.168.1.0/24)
-- 📋 **Banner Grabbing**: Capture and display service banners
-- 🔬 **Service Detection**: Automatically identify services (Telnet, SSH, FTP, SMTP, HTTP)
+- 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
 - 📊 **Detailed Results**: Comprehensive scan results with timestamps and statistics
 - 💾 **Export Functionality**: Save results in CSV, JSON, or TXT format
@@ -58,7 +57,6 @@ python3 telnet_enumerator.py
 5. **View Results**: Detailed results appear below with:
    - Connection status (Open/Closed/Timeout/Error)
    - Response time in milliseconds
-   - Service identification
    - Banner information
    - Timestamp
    - Scan statistics summary
@@ -88,14 +86,6 @@ pyinstaller --onefile --windowed --name telnet-enumerator telnet_enumerator.py
 The executable will be created in the `dist/` directory.
 
 ## Advanced Features
-
-### Service Detection
-The tool automatically identifies common services based on banner signatures:
-- Telnet (login prompts, telnet keywords)
-- SSH (OpenSSH, SSH version strings)
-- FTP (FTP server responses)
-- SMTP (mail server banners)
-- HTTP (web server headers)
 
 ### Export Formats
 
