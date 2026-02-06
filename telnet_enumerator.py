@@ -167,6 +167,8 @@ class TelnetEnumeratorGUI:
             timeout = float(self.timeout_entry.get().strip())
             if timeout <= 0:
                 return False, "Timeout must be greater than 0"
+            if timeout > 60:
+                return False, "Timeout must be 60 seconds or less"
         except ValueError:
             return False, "Timeout must be a valid number"
         
