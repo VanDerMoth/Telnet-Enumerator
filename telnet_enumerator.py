@@ -1442,6 +1442,12 @@ class TelnetEnumeratorGUI:
         for item in self.file_tree.get_children():
             self.file_tree.delete(item)
         
+        # Clear the file data map to prevent stale item ID references
+        if not hasattr(self, '_file_data_map'):
+            self._file_data_map = {}
+        else:
+            self._file_data_map.clear()
+        
         # Clear content viewer
         self.files_text.delete(1.0, tk.END)
         self.content_info_label.config(text="Select a file to view")
