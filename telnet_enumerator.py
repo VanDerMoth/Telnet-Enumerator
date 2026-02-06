@@ -16,6 +16,8 @@ from datetime import datetime
 import ipaddress
 import base64
 import struct
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class TelnetEnumerator:
@@ -41,6 +43,10 @@ class TelnetEnumerator:
         self.default_port = 23
         self.timeout = 3
         self.encryption_check_delay = 0.5  # Delay in seconds for encryption response
+        self.max_workers = 10  # Default thread pool size for concurrent scanning
+        self.jitter_min = 0.0  # Minimum delay between scans (seconds)
+        self.jitter_max = 0.0  # Maximum delay between scans (seconds)
+        self.randomize_order = False  # Whether to randomize scan order
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -140,7 +146,7 @@ class TelnetEnumerator:
             auth_will = IAC + WILL + AUTH
             sock.send(auth_will)
             
-            time.sleep(0.5)
+            time.sleep(0.3)  # Reduced from 0.5 for speed
             
             # Receive server's response
             try:
@@ -248,7 +254,7 @@ class TelnetEnumerator:
                 
                 if connection_result == 0:
                     # Wait for initial banner/prompt
-                    time.sleep(0.5)
+                    time.sleep(0.3)  # Reduced from 0.5 for speed
                     try:
                         banner = sock.recv(1024).decode('utf-8', errors='ignore')
                     except (socket.error, OSError):
@@ -256,7 +262,7 @@ class TelnetEnumerator:
                     
                     # Send username
                     sock.send((username + '\r\n').encode('utf-8'))
-                    time.sleep(0.5)
+                    time.sleep(0.3)  # Reduced from 0.5 for speed
                     
                     try:
                         response = sock.recv(1024).decode('utf-8', errors='ignore')
@@ -265,7 +271,7 @@ class TelnetEnumerator:
                     
                     # Send password
                     sock.send((password + '\r\n').encode('utf-8'))
-                    time.sleep(0.5)
+                    time.sleep(0.3)  # Reduced from 0.5 for speed
                     
                     try:
                         final_response = sock.recv(1024).decode('utf-8', errors='ignore')
@@ -305,7 +311,9 @@ class TelnetEnumerator:
                 pass
             
             # Small delay between attempts to avoid overwhelming the server
-            time.sleep(0.2)
+            # Only add delay if jitter is not configured (avoid double delays)
+            if self.jitter_max == 0:
+                time.sleep(0.1)  # Reduced from 0.2 for speed
         
         return successful_logins
     
@@ -322,6 +330,11 @@ class TelnetEnumerator:
         Returns:
             dict with status, banner, error, timing information, encryption support, NTLM info, and credential test results
         """
+        # Apply jitter/delay if configured
+        if self.jitter_max > 0:
+            delay = random.uniform(self.jitter_min, self.jitter_max)
+            time.sleep(delay)
+        
         result = {
             'ip': ip_address,
             'port': port,
@@ -336,8 +349,18 @@ class TelnetEnumerator:
         }
         
         try:
-            # Create socket connection
+            # Create socket connection with source port randomization for stealth
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            # Randomize source port for stealth (bind to random high port)
+            if self.randomize_order:  # Reuse this flag for source port randomization
+                try:
+                    random_port = random.randint(10000, 65000)
+                    sock.bind(('', random_port))
+                except (OSError, socket.error):
+                    # If binding fails, proceed without source port randomization
+                    pass
+            
             sock.settimeout(self.timeout)
             
             # Measure connection time
@@ -435,6 +458,8 @@ class TelnetEnumeratorGUI:
         # Options for scanning
         self.extract_ntlm_var = tk.BooleanVar(value=False)
         self.test_credentials_var = tk.BooleanVar(value=False)
+        self.randomize_order_var = tk.BooleanVar(value=False)
+        self.use_jitter_var = tk.BooleanVar(value=False)
         
         self.setup_ui()
         self.check_queue()
@@ -470,9 +495,16 @@ class TelnetEnumeratorGUI:
         self.timeout_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         self.timeout_entry.insert(0, "3")
         
+        # Thread count input
+        ttk.Label(main_frame, text="Threads:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.threads_entry = ttk.Entry(main_frame, width=30)
+        self.threads_entry.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.threads_entry.insert(0, "10")
+        ttk.Label(main_frame, text="(concurrent connections, 1-50)", font=('Helvetica', 8)).grid(row=3, column=2, sticky=tk.W)
+        
         # Options frame for checkboxes
         options_frame = ttk.LabelFrame(main_frame, text="Scan Options", padding="10")
-        options_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10, padx=5)
+        options_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10, padx=5)
         
         self.extract_ntlm_checkbox = ttk.Checkbutton(
             options_frame, 
@@ -491,16 +523,37 @@ class TelnetEnumeratorGUI:
         ttk.Label(options_frame, text="⚠️ Credential testing may trigger security alerts", 
                  font=('Helvetica', 8), foreground='orange').grid(row=2, column=0, sticky=tk.W, pady=2)
         
+        # Stealth options
+        stealth_frame = ttk.LabelFrame(main_frame, text="Stealth Options (Less Detectable)", padding="10")
+        stealth_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10, padx=5)
+        
+        self.randomize_checkbox = ttk.Checkbutton(
+            stealth_frame,
+            text="Randomize Scan Order & Source Ports",
+            variable=self.randomize_order_var
+        )
+        self.randomize_checkbox.grid(row=0, column=0, sticky=tk.W, pady=2)
+        
+        self.jitter_checkbox = ttk.Checkbutton(
+            stealth_frame,
+            text="Add Random Delays (Jitter: 0.5-2.0 sec)",
+            variable=self.use_jitter_var
+        )
+        self.jitter_checkbox.grid(row=1, column=0, sticky=tk.W, pady=2)
+        
+        ttk.Label(stealth_frame, text="ℹ️ Stealth options reduce detection but slow down scans", 
+                 font=('Helvetica', 8), foreground='blue').grid(row=2, column=0, sticky=tk.W, pady=2)
+        
         # Progress bar
-        ttk.Label(main_frame, text="Progress:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="Progress:").grid(row=6, column=0, sticky=tk.W, pady=5)
         self.progress_bar = ttk.Progressbar(main_frame, mode='determinate')
-        self.progress_bar.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.progress_bar.grid(row=6, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         self.progress_label = ttk.Label(main_frame, text="0/0")
-        self.progress_label.grid(row=4, column=2, sticky=tk.W, pady=5)
+        self.progress_label.grid(row=6, column=2, sticky=tk.W, pady=5)
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=7, column=0, columnspan=3, pady=10)
         
         self.scan_button = ttk.Button(button_frame, text="Start Scan", command=self.start_scan)
         self.scan_button.grid(row=0, column=0, padx=5)
@@ -515,11 +568,11 @@ class TelnetEnumeratorGUI:
         self.export_button.grid(row=0, column=3, padx=5)
         
         # Results text area
-        ttk.Label(main_frame, text="Results:").grid(row=6, column=0, sticky=(tk.W, tk.N), pady=5)
+        ttk.Label(main_frame, text="Results:").grid(row=8, column=0, sticky=(tk.W, tk.N), pady=5)
         
         self.results_text = scrolledtext.ScrolledText(main_frame, width=90, height=25, 
                                                       wrap=tk.WORD, font=('Courier', 9))
-        self.results_text.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
+        self.results_text.grid(row=8, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
                               pady=5, padx=5)
         
         # Status bar
@@ -527,7 +580,7 @@ class TelnetEnumeratorGUI:
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                               relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        status_bar.grid(row=9, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
     
     def validate_inputs(self) -> tuple:
         """Validate user inputs"""
@@ -544,6 +597,15 @@ class TelnetEnumeratorGUI:
                 return False, "Timeout must be 60 seconds or less"
         except ValueError:
             return False, "Timeout must be a valid number"
+        
+        try:
+            threads = int(self.threads_entry.get().strip())
+            if threads < 1:
+                return False, "Thread count must be at least 1"
+            if threads > 50:
+                return False, "Thread count must be 50 or less"
+        except ValueError:
+            return False, "Thread count must be a valid integer"
         
         return True, None
     
@@ -570,13 +632,28 @@ class TelnetEnumeratorGUI:
         ip_address = self.ip_entry.get().strip()
         port = 23  # Hardcoded for telnet
         timeout = float(self.timeout_entry.get().strip())
+        threads = int(self.threads_entry.get().strip())
         
         # Update enumerator timeout
         self.enumerator.timeout = timeout
+        self.enumerator.max_workers = threads
         
         # Get scan options
         extract_ntlm = self.extract_ntlm_var.get()
         test_credentials = self.test_credentials_var.get()
+        
+        # Get stealth options
+        randomize_order = self.randomize_order_var.get()
+        use_jitter = self.use_jitter_var.get()
+        
+        # Configure stealth settings
+        self.enumerator.randomize_order = randomize_order
+        if use_jitter:
+            self.enumerator.jitter_min = 0.5
+            self.enumerator.jitter_max = 2.0
+        else:
+            self.enumerator.jitter_min = 0.0
+            self.enumerator.jitter_max = 0.0
         
         # Start scan in separate thread
         self.scan_thread = threading.Thread(
@@ -594,7 +671,7 @@ class TelnetEnumeratorGUI:
         self.stop_button.config(state=tk.DISABLED)
     
     def run_scan(self, ip_address: str, port: int, extract_ntlm: bool, test_credentials: bool):
-        """Run the scan in a separate thread"""
+        """Run the scan in a separate thread with concurrent execution"""
         try:
             results = []
             total_scans = 0
@@ -603,40 +680,72 @@ class TelnetEnumeratorGUI:
             # Check if it's a CIDR range or single IP
             is_cidr = '/' in ip_address
             
+            # Prepare list of IPs to scan
+            ips_to_scan = []
+            
             if is_cidr:
                 # IP range scanning with CIDR
                 try:
                     network = ipaddress.ip_network(ip_address, strict=False)
                     # Handle different network sizes including /31 and /32
-                    total_scans = max(1, network.num_addresses - 2)
-                    self.result_queue.put(('progress', 0, total_scans))
+                    ips_to_scan = [str(ip) for ip in network.hosts()]
+                    if not ips_to_scan:  # Handle /31 and /32
+                        ips_to_scan = [str(ip) for ip in network]
+                except ValueError as e:
+                    # Invalid CIDR notation, treat as single IP
+                    ips_to_scan = [ip_address]
+            else:
+                # Single IP scan
+                ips_to_scan = [ip_address]
+            
+            # Randomize order if stealth mode is enabled
+            if self.enumerator.randomize_order:
+                random.shuffle(ips_to_scan)
+            
+            total_scans = len(ips_to_scan)
+            self.result_queue.put(('progress', 0, total_scans))
+            
+            # Use ThreadPoolExecutor for concurrent scanning
+            with ThreadPoolExecutor(max_workers=self.enumerator.max_workers) as executor:
+                # Submit all scan tasks
+                future_to_ip = {
+                    executor.submit(
+                        self.enumerator.check_telnet, 
+                        ip, port, extract_ntlm, test_credentials
+                    ): ip 
+                    for ip in ips_to_scan
+                }
+                
+                # Process completed scans as they finish
+                for future in as_completed(future_to_ip):
+                    if not self.is_scanning:
+                        # Cancel remaining tasks if scan is stopped
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
                     
-                    for ip in network.hosts():
-                        if not self.is_scanning:
-                            break
-                        result = self.enumerator.check_telnet(str(ip), port, extract_ntlm, test_credentials)
+                    try:
+                        result = future.result()
                         results.append(result)
                         completed_scans += 1
                         self.result_queue.put(('progress', completed_scans, total_scans))
-                        
-                except ValueError as e:
-                    # Invalid CIDR notation, treat as single IP
-                    total_scans = 1
-                    self.result_queue.put(('progress', 0, total_scans))
-                    result = self.enumerator.check_telnet(ip_address, port, extract_ntlm, test_credentials)
-                    results.append(result)
-                    completed_scans += 1
-                    self.result_queue.put(('progress', completed_scans, total_scans))
-            else:
-                # Single IP scan
-                total_scans = 1
-                self.result_queue.put(('progress', 0, total_scans))
-                
-                if self.is_scanning:
-                    result = self.enumerator.check_telnet(ip_address, port, extract_ntlm, test_credentials)
-                    results.append(result)
-                    completed_scans += 1
-                    self.result_queue.put(('progress', completed_scans, total_scans))
+                    except Exception as e:
+                        # Log error but continue with other scans
+                        ip = future_to_ip[future]
+                        error_result = {
+                            'ip': ip,
+                            'port': port,
+                            'status': 'error',
+                            'banner': None,
+                            'error': str(e),
+                            'response_time': None,
+                            'encryption_support': None,
+                            'ntlm_info': None,
+                            'credential_results': None,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        results.append(error_result)
+                        completed_scans += 1
+                        self.result_queue.put(('progress', completed_scans, total_scans))
             
             # Send results
             self.result_queue.put(('results', results))

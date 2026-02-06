@@ -22,6 +22,11 @@ class TestTelnetEnumerator(unittest.TestCase):
         self.assertEqual(self.enumerator.timeout, 3)
         self.assertIsInstance(self.enumerator.DEFAULT_CREDENTIALS, list)
         self.assertGreater(len(self.enumerator.DEFAULT_CREDENTIALS), 0)
+        # Test new concurrent and stealth attributes
+        self.assertEqual(self.enumerator.max_workers, 10)
+        self.assertEqual(self.enumerator.jitter_min, 0.0)
+        self.assertEqual(self.enumerator.jitter_max, 0.0)
+        self.assertEqual(self.enumerator.randomize_order, False)
     
     def test_default_credentials_format(self):
         """Test that default credentials are properly formatted"""
@@ -84,6 +89,21 @@ class TestTelnetEnumerator(unittest.TestCase):
         result = self.enumerator.check_telnet("127.0.0.1", 65534, test_credentials=False)
         # Credential results should be None when disabled
         self.assertIsNone(result.get('credential_results'))
+    
+    def test_stealth_options_configuration(self):
+        """Test that stealth options can be configured"""
+        self.enumerator.randomize_order = True
+        self.enumerator.jitter_min = 0.5
+        self.enumerator.jitter_max = 2.0
+        
+        self.assertTrue(self.enumerator.randomize_order)
+        self.assertEqual(self.enumerator.jitter_min, 0.5)
+        self.assertEqual(self.enumerator.jitter_max, 2.0)
+    
+    def test_concurrent_workers_configuration(self):
+        """Test that concurrent workers can be configured"""
+        self.enumerator.max_workers = 20
+        self.assertEqual(self.enumerator.max_workers, 20)
 
 
 class TestTelnetEnumeratorIntegration(unittest.TestCase):

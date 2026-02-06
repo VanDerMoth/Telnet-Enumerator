@@ -6,6 +6,8 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 
 - 🖥️ **User-Friendly GUI**: Built with tkinter for easy cross-platform use
 - 🔍 **IP Range Scanning**: Scan multiple IPs using CIDR notation (e.g., 192.168.1.0/24)
+- ⚡ **Concurrent Scanning**: Multi-threaded scanning with configurable thread pool (1-50 threads)
+- 🥷 **Stealth Mode**: Randomize scan order, source ports, and add jitter to avoid detection
 - 🔒 **Encryption Detection**: Automatically assess Telnet encryption support (RFC 2946)
 - 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
 - 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
@@ -53,15 +55,25 @@ python3 telnet_enumerator.py
    
 2. **Set Timeout**: Connection timeout in seconds (default: 3)
 
-3. **Enable Scan Options** (Optional):
+3. **Set Thread Count**: Number of concurrent connections (default: 10, range: 1-50)
+   - Higher values = faster scans but more network noise
+   - Lower values = slower scans but more stealthy
+
+4. **Enable Scan Options** (Optional):
    - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
    - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
    
    ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
 
-4. **Click Start Scan**: Begin the enumeration
+5. **Enable Stealth Options** (Optional - Less Detectable):
+   - **Randomize Scan Order & Source Ports**: Randomizes the order of IP scanning and uses random source ports to avoid pattern detection
+   - **Add Random Delays (Jitter)**: Adds random delays (0.5-2.0 seconds) between connection attempts to avoid rate-based detection
+   
+   ℹ️ **Note**: Stealth options significantly reduce detection by IDS/IPS but will slow down scans
 
-5. **View Results**: Detailed results appear below with:
+6. **Click Start Scan**: Begin the enumeration
+
+7. **View Results**: Detailed results appear below with:
    - Connection status (Open/Closed/Timeout/Error)
    - Encryption support status (Supported/Not Supported/Unknown)
    - NTLM authentication details (if extracted)
@@ -71,9 +83,20 @@ python3 telnet_enumerator.py
    - Timestamp
    - Scan statistics summary
 
-6. **Export Results**: Save your scan results in CSV, JSON, or TXT format
+8. **Export Results**: Save your scan results in CSV, JSON, or TXT format
 
 ### Example Scans
+
+**Fast Concurrent Scan:**
+- IP: `192.168.1.0/24`
+- Threads: `20`
+- Result: Rapidly scan all 254 hosts in the subnet using 20 concurrent connections
+
+**Stealth Scan (Low Detection):**
+- IP: `192.168.1.0/24`
+- Threads: `5`
+- Options: Enable "Randomize Scan Order & Source Ports" and "Add Random Delays (Jitter)"
+- Result: Slower but much less detectable scan with randomized order and timing
 
 **Single IP Scan:**
 - IP: `192.168.1.100`
@@ -151,12 +174,30 @@ The tool attempts to authenticate and reports successful logins with response sn
 - Preserves the exact output from the GUI
 - Ideal for reports and documentation
 
-### Performance Features
+### Performance & Stealth Features
 
+#### Speed Improvements
+- **Concurrent Scanning**: Uses ThreadPoolExecutor for parallel IP scanning (configurable 1-50 threads)
+- **Optimized Timeouts**: Reduced internal delays for faster credential testing and NTLM extraction
+- **Efficient Socket Handling**: Improved connection management and resource usage
 - **Multi-threading**: Scans run in background threads to keep GUI responsive
 - **Progress Tracking**: Real-time progress bar shows scan completion
 - **Stop Scan**: Ability to cancel long-running scans
 - **Response Time Tracking**: Measure and display connection times
+
+#### Stealth Features (Reduced Detectability)
+- **Randomized Scan Order**: Shuffle IP addresses to avoid sequential scanning patterns
+- **Source Port Randomization**: Use random high ports (10000-65000) to avoid fingerprinting
+- **Jitter/Random Delays**: Add random delays (0.5-2.0 sec) between connections to avoid rate-based detection
+- **Rate Limiting**: Control scan speed with thread count to avoid triggering IDS/IPS alerts
+- **Configurable Timing**: Adjust timeouts and delays to match normal traffic patterns
+
+#### Stealth Recommendations
+- Use 5 or fewer threads for maximum stealth
+- Enable both randomization and jitter options
+- Increase timeout values to 5+ seconds for more natural timing
+- Avoid credential testing on production systems (very noisy)
+- Consider scanning during peak hours when legitimate traffic is higher
 
 ## GitHub Actions Workflow
 
