@@ -135,7 +135,7 @@ class TelnetEnumerator:
         self.randomize_order = False  # Whether to randomize scan order
         self.randomize_source_port = False  # Whether to randomize source port for stealth
         self.files_to_view = []  # List of file paths to view when credentials are valid
-        self.auto_scrub_files = False  # Whether to automatically scrub common files
+        self.auto_scrub_files = False  # Whether to automatically discover and view files
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -632,28 +632,22 @@ class TelnetEnumerator:
                         if self.files_to_view:
                             files_to_try = self.files_to_view
                         elif self.auto_scrub_files:
-                            # Auto-scrub mode: discover text/image files AND include system files
+                            # Auto-scrub mode: discover files through directory enumeration
                             try:
-                                # Start with common system files (62 files: 36 Linux + 26 Windows)
-                                files_to_try = list(self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES)
-                                
-                                # Add discovered text and image files
+                                # Discover files using directory traversal and enumeration
                                 discovered = self._discover_files_via_telnet(sock)
                                 if discovered:
-                                    # Add discovered files that aren't already in the list
-                                    for file_path in discovered:
-                                        if file_path not in files_to_try:
-                                            files_to_try.append(file_path)
+                                    files_to_try = discovered
+                                else:
+                                    files_to_try = []
                                 
                                 # Limit to MAX_DISCOVERED_FILES to avoid overwhelming output
-                                # Note: System files (62) are prioritized, so discovered files are
-                                # effectively limited to ~38 slots (MAX_DISCOVERED_FILES - 62)
                                 if len(files_to_try) > self.MAX_DISCOVERED_FILES:
                                     files_to_try = files_to_try[:self.MAX_DISCOVERED_FILES]
                                     
                             except Exception:
-                                # Fallback to common files if discovery fails
-                                files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
+                                # If discovery fails, no files to try
+                                files_to_try = []
                         
                         # If file viewing is enabled and we have files to view, try to read them
                         if files_to_try:
@@ -902,7 +896,7 @@ class TelnetEnumeratorGUI:
         # Auto-scrub checkbox
         self.auto_scrub_checkbox = ttk.Checkbutton(
             options_frame,
-            text="  Auto-scrub common files (system files + discovers text/image files, up to 100)",
+            text="  Auto-discover and view files (discovers text/image files through enumeration, up to 100)",
             variable=self.auto_scrub_var
         )
         self.auto_scrub_checkbox.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
@@ -1145,7 +1139,7 @@ class TelnetEnumeratorGUI:
         files_to_view = []
         if view_files and test_credentials:
             if auto_scrub:
-                # Auto-scrub mode: will use common files list
+                # Auto-discover mode: will discover files through enumeration
                 self.enumerator.auto_scrub_files = True
                 self.enumerator.files_to_view = []
             else:
