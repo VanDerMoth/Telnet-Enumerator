@@ -52,12 +52,64 @@ class TelnetEnumerator:
         '/etc/network/interfaces',
         '/root/.ssh/authorized_keys',
         '/root/.bash_history',
+        # Common CTF text files
+        '/root/flag.txt',
+        '/root/user.txt',
+        '/root/root.txt',
+        '/home/user/flag.txt',
+        '/home/user/user.txt',
+        '/flag.txt',
+        '/user.txt',
+        '/root.txt',
+        'flag.txt',
+        'user.txt',
+        'note.txt',
+        'notes.txt',
+        'readme.txt',
+        'README.txt',
+        'todo.txt',
+        'passwords.txt',
+        'creds.txt',
+        # Common CTF image files (may contain steganography)
+        '/root/flag.jpg',
+        '/root/flag.png',
+        '/home/user/flag.jpg',
+        '/home/user/flag.png',
+        'flag.jpg',
+        'flag.png',
+        'image.jpg',
+        'image.png',
     ]
     
     COMMON_WINDOWS_FILES = [
         'C:\\Windows\\System32\\drivers\\etc\\hosts',
         'C:\\Windows\\win.ini',
         'C:\\boot.ini',
+        # Common CTF text files
+        'C:\\Users\\Administrator\\Desktop\\flag.txt',
+        'C:\\Users\\Administrator\\Desktop\\user.txt',
+        'C:\\Users\\Administrator\\Desktop\\root.txt',
+        'C:\\flag.txt',
+        'C:\\user.txt',
+        'C:\\root.txt',
+        'flag.txt',
+        'user.txt',
+        'note.txt',
+        'notes.txt',
+        'readme.txt',
+        'README.txt',
+        'todo.txt',
+        'passwords.txt',
+        'creds.txt',
+        # Common CTF image files (may contain steganography)
+        'C:\\Users\\Administrator\\Desktop\\flag.jpg',
+        'C:\\Users\\Administrator\\Desktop\\flag.png',
+        'C:\\flag.jpg',
+        'C:\\flag.png',
+        'flag.jpg',
+        'flag.png',
+        'image.jpg',
+        'image.png',
     ]
     
     # File viewing constants
@@ -67,6 +119,11 @@ class TelnetEnumerator:
     BUFFER_CLEAR_TIMEOUT = 0.5  # Timeout for clearing socket buffer (seconds)
     COMMAND_DELAY = 0.5  # Delay after sending command (seconds)
     RESPONSE_TIMEOUT = 1.0  # Timeout for receiving response (seconds)
+    MAX_DISCOVERED_FILES = 100  # Maximum number of discovered files to attempt reading
+    
+    # File extensions to search for when discovering files
+    TEXT_EXTENSIONS = ['txt', 'log', 'conf', 'config', 'md', 'csv', 'json', 'xml', 'yaml', 'yml', 'ini', 'sh', 'bat', 'ps1']
+    IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'svg']
     
     def __init__(self):
         self.default_port = 23
@@ -263,6 +320,91 @@ class TelnetEnumerator:
         except (struct.error, IndexError, ValueError):
             return None
     
+    def _discover_files_via_telnet(self, sock: socket.socket) -> List[str]:
+        """
+        Discover text and image files on the target system through telnet
+        
+        Args:
+            sock: Active authenticated socket connection
+            
+        Returns:
+            List of discovered file paths (up to MAX_DISCOVERED_FILES)
+        """
+        discovered_files = []
+        
+        # Build find command for Linux (searches common directories)
+        text_exts = '|'.join([f'\\.{ext}$' for ext in self.TEXT_EXTENSIONS])
+        image_exts = '|'.join([f'\\.{ext}$' for ext in self.IMAGE_EXTENSIONS])
+        all_exts = text_exts + '|' + image_exts
+        
+        # Try multiple discovery strategies
+        discovery_commands = [
+            # Linux: find command with common directories and size limit (files < 10MB)
+            f'find /root /home /tmp /var /opt /etc -type f -size -10M 2>/dev/null | grep -E "({all_exts})" | head -n {self.MAX_DISCOVERED_FILES}',
+            # Windows: dir command for common locations
+            f'dir /s /b C:\\Users\\*.txt C:\\Users\\*.jpg C:\\Users\\*.png C:\\Users\\*.gif 2>nul | findstr /i ".txt .jpg .png .gif" | more +1',
+            # Alternative Windows with Desktop focus
+            f'dir /s /b C:\\Users\\*\\Desktop\\*.* 2>nul | findstr /i ".txt .jpg .png .gif .log" | more +1',
+            # Linux: simple ls in common directories
+            'ls -1 /root/*.txt /root/*.jpg /root/*.png /home/*/*.txt /home/*/*.jpg 2>/dev/null | head -n 50',
+            # Current directory search (works on both)
+            'ls -1 *.txt *.jpg *.png *.gif 2>/dev/null || dir /b *.txt *.jpg *.png *.gif 2>nul',
+        ]
+        
+        for cmd in discovery_commands:
+            if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
+                break
+                
+            try:
+                # Clear any pending data
+                sock.settimeout(self.BUFFER_CLEAR_TIMEOUT)
+                try:
+                    while sock.recv(4096):
+                        pass
+                except socket.timeout:
+                    pass
+                
+                # Send discovery command
+                sock.sendall((cmd + '\n').encode('utf-8', errors='ignore'))
+                time.sleep(self.COMMAND_DELAY)
+                
+                # Collect response
+                sock.settimeout(self.RESPONSE_TIMEOUT)
+                response = b''
+                try:
+                    for _ in range(20):  # Read multiple chunks for longer output
+                        chunk = sock.recv(4096)
+                        if chunk:
+                            response += chunk
+                        else:
+                            break
+                except socket.timeout:
+                    pass
+                
+                # Parse response to extract file paths
+                if response:
+                    response_text = response.decode('utf-8', errors='ignore')
+                    lines = response_text.split('\n')
+                    
+                    for line in lines:
+                        line = line.strip()
+                        # Filter for lines that look like file paths
+                        if line and not line.startswith('#') and not line.startswith('$'):
+                            # Check if line contains valid file extensions
+                            if any(line.lower().endswith(f'.{ext}') for ext in self.TEXT_EXTENSIONS + self.IMAGE_EXTENSIONS):
+                                # Clean up the line (remove ANSI codes, prompts, etc.)
+                                cleaned = line.split()[-1] if ' ' in line else line
+                                if cleaned and cleaned not in discovered_files:
+                                    discovered_files.append(cleaned)
+                                    if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
+                                        break
+                
+            except Exception:
+                # Silently continue to next discovery method
+                continue
+        
+        return discovered_files
+    
     def _view_files_via_telnet(self, sock: socket.socket, files_to_view: List[str]) -> List[Dict]:
         """
         View files through an authenticated telnet session
@@ -425,8 +567,17 @@ class TelnetEnumerator:
                         if self.files_to_view:
                             files_to_try = self.files_to_view
                         elif self.auto_scrub_files:
-                            # Auto-scrub mode: try common files for both Linux and Windows
-                            files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
+                            # Auto-scrub mode: discover ALL text and image files on the system
+                            try:
+                                discovered = self._discover_files_via_telnet(sock)
+                                if discovered:
+                                    files_to_try = discovered
+                                else:
+                                    # Fallback to common files if discovery fails
+                                    files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
+                            except Exception:
+                                # Fallback to common files if discovery fails
+                                files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
                         
                         # If file viewing is enabled and we have files to view, try to read them
                         if files_to_try:
@@ -672,7 +823,7 @@ class TelnetEnumeratorGUI:
         # Auto-scrub checkbox
         self.auto_scrub_checkbox = ttk.Checkbutton(
             options_frame,
-            text="  Auto-scrub common files (tries ~14 common files automatically)",
+            text="  Auto-scrub common files (discovers ALL text/image files, up to 100)",
             variable=self.auto_scrub_var
         )
         self.auto_scrub_checkbox.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
