@@ -191,19 +191,21 @@ When valid credentials are discovered during credential testing, the tool can au
      - Linux: `/etc/passwd`, `/etc/shadow`, `/etc/hosts`, `/root/.ssh/authorized_keys`, `/home/*/.ssh/authorized_keys`
      - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Users\Administrator\Desktop\*`
 
-2. **Auto-Scrub Mode** (NEW):
+2. **Auto-Scrub Mode** (ENHANCED):
    - Enable "View Files" and "Auto-scrub common files" checkboxes
    - Automatically attempts to read discovered text/image files plus common system files (up to 100 total files)
    - **System files included** (62 files - always prioritized):
      - Linux: `/etc/passwd`, `/etc/hosts`, `/etc/hostname`, `/etc/issue`, `/etc/os-release`, `/proc/version`, `/proc/cpuinfo`, `/etc/ssh/sshd_config`, `/etc/network/interfaces`, `/root/.ssh/authorized_keys`, `/root/.bash_history`, plus CTF files
      - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Windows\win.ini`, `C:\boot.ini`, plus CTF files
-   - **Dynamic file discovery** (up to ~38 additional files):
+   - **Enhanced file discovery** (up to ~38 additional files):
      - Text files: `.txt`, `.log`, `.conf`, `.config`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.ini`, `.sh`, `.bat`, `.ps1`
      - Image files: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.svg`
-   - **Discovery process**:
-     - Linux: Uses `find` commands to search common directories (`/root`, `/home`, `/tmp`, `/var`, `/opt`, `/etc`)
-     - Windows: Uses `dir` commands to search user directories and Desktop folders
+   - **Comprehensive discovery process**:
+     - Linux: Uses `find` commands to search entire filesystem and common directories (`/root`, `/home`, `/tmp`, `/var`, `/opt`, `/etc`, `/usr/local`)
+     - Windows: Uses `dir` commands to search all drives, user directories, Desktop and Documents folders
      - Searches for files under 10MB in size
+     - Includes recently modified files (last 30 days)
+     - Searches current directory and subdirectories
      - Combines discovered files with known system files for comprehensive coverage
      - System files are prioritized; discovered files fill remaining slots up to 100 total
    - Ideal for CTF scenarios and thorough reconnaissance where you want maximum file coverage
@@ -213,12 +215,30 @@ When valid credentials are discovered during credential testing, the tool can au
 2. Attempts to read specified or common files using standard commands (`cat`, `type`, `more`)
 3. Captures file contents (up to 2000 characters per file)
 4. Main Results tab shows file count summary
-5. Files Viewed tab displays complete file contents with metadata (IP, credentials, timestamp, file path)
+5. Files Viewed tab displays files in a hierarchical tree structure organized by target and directory
 6. Reports errors if files cannot be read (permissions, non-existent, etc.)
 
-**Display:**
+**Enhanced File/Folder/Path Viewer:**
 - **Main Results Tab**: Shows credential success and file view summary (e.g., "3/5 files successfully read")
-- **Files Viewed Tab**: Dedicated tab showing all file contents in detail, preventing clutter in main results
+- **Files Viewed Tab**: Advanced file browser with hierarchical tree view
+  - **Tree View (Left Panel)**: 
+    - Organized by target (IP:port) → directory hierarchy → files
+    - Expandable folders for easy navigation
+    - Color-coded status indicators (✓ Success, ✗ Error, ✗ Not Found)
+    - Shows file size and target for each file
+  - **Content Viewer (Right Panel)**:
+    - Displays full file content when selected
+    - Shows file metadata (target, credentials, timestamp, size)
+    - Clear error messages for failed reads
+  - **Search & Filter**:
+    - Text filter: Search files by path name
+    - Status filter: Show only Success/Error/Not Found files
+    - Real-time filtering as you type
+  - **Benefits**: 
+    - Easy to navigate large numbers of files
+    - Quickly identify which files were successfully read
+    - Find specific files or directories instantly
+    - Better overview of the file system structure
 
 ⚠️ **Warning**: File viewing is intrusive and will generate logs on the target system. Use only in authorized penetration testing scenarios.
 
