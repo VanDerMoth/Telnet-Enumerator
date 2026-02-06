@@ -48,6 +48,7 @@ class TelnetEnumerator:
         self.jitter_max = 0.0  # Maximum delay between scans (seconds)
         self.randomize_order = False  # Whether to randomize scan order
         self.randomize_source_port = False  # Whether to randomize source port for stealth
+        self.files_to_view = []  # List of file paths to view when credentials are valid
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -232,6 +233,90 @@ class TelnetEnumerator:
         except (struct.error, IndexError, ValueError):
             return None
     
+    def _view_files_via_telnet(self, sock: socket.socket, files_to_view: List[str]) -> List[Dict]:
+        """
+        View files through an authenticated telnet session
+        
+        Args:
+            sock: Active authenticated socket connection
+            files_to_view: List of file paths to attempt to read
+            
+        Returns:
+            List of dicts containing file path and content
+        """
+        viewed_files = []
+        
+        for file_path in files_to_view:
+            try:
+                # Common commands to read files (try multiple for compatibility)
+                commands = [
+                    f'cat {file_path}',
+                    f'type {file_path}',  # Windows
+                    f'more {file_path}',
+                ]
+                
+                file_content = None
+                
+                for cmd in commands:
+                    # Clear buffer first
+                    sock.settimeout(0.5)
+                    try:
+                        sock.recv(4096)
+                    except socket.timeout:
+                        pass
+                    
+                    # Send command
+                    sock.settimeout(self.timeout)
+                    sock.send((cmd + '\r\n').encode('utf-8'))
+                    time.sleep(0.5)
+                    
+                    # Receive response
+                    try:
+                        response = b''
+                        sock.settimeout(1.0)
+                        while True:
+                            try:
+                                chunk = sock.recv(4096)
+                                if not chunk:
+                                    break
+                                response += chunk
+                            except socket.timeout:
+                                break
+                        
+                        content = response.decode('utf-8', errors='ignore').strip()
+                        
+                        # Check if command was successful (not an error message)
+                        if content and not any(err in content.lower() for err in [
+                            'no such file', 'cannot open', 'not found', 
+                            'permission denied', 'command not found', 'bad command'
+                        ]):
+                            file_content = content
+                            break
+                    except (socket.error, OSError):
+                        continue
+                
+                if file_content:
+                    viewed_files.append({
+                        'path': file_path,
+                        'content': file_content[:2000],  # Limit to 2000 chars per file
+                        'size': len(file_content)
+                    })
+                else:
+                    viewed_files.append({
+                        'path': file_path,
+                        'content': None,
+                        'error': 'Unable to read file or file not found'
+                    })
+                    
+            except Exception as e:
+                viewed_files.append({
+                    'path': file_path,
+                    'content': None,
+                    'error': str(e)
+                })
+        
+        return viewed_files
+    
     def _test_credentials(self, ip_address: str, port: int, credentials: List[Tuple[str, str]]) -> List[Dict]:
         """
         Test a list of credentials against the telnet server
@@ -299,11 +384,23 @@ class TelnetEnumerator:
                     
                     # If we see success indicators and no failure indicators, consider it successful
                     if has_success and not has_failure:
-                        successful_logins.append({
+                        login_result = {
                             'username': username,
                             'password': password,
                             'response': (response + final_response).strip()[:200]  # Limit response length
-                        })
+                        }
+                        
+                        # If file viewing is enabled and we have files to view, try to read them
+                        if self.files_to_view:
+                            try:
+                                viewed_files = self._view_files_via_telnet(sock, self.files_to_view)
+                                if viewed_files:
+                                    login_result['files_viewed'] = viewed_files
+                            except Exception as e:
+                                # Don't fail the credential test if file viewing fails
+                                login_result['file_view_error'] = str(e)
+                        
+                        successful_logins.append(login_result)
                 
                 sock.close()
                 
@@ -462,6 +559,7 @@ class TelnetEnumeratorGUI:
         # Options for scanning
         self.extract_ntlm_var = tk.BooleanVar(value=False)
         self.test_credentials_var = tk.BooleanVar(value=False)
+        self.view_files_var = tk.BooleanVar(value=False)
         self.randomize_order_var = tk.BooleanVar(value=False)
         self.use_jitter_var = tk.BooleanVar(value=False)
         
@@ -524,8 +622,22 @@ class TelnetEnumeratorGUI:
         )
         self.test_credentials_checkbox.grid(row=1, column=0, sticky=tk.W, pady=2)
         
+        self.view_files_checkbox = ttk.Checkbutton(
+            options_frame,
+            text="View Files (requires credential testing)",
+            variable=self.view_files_var
+        )
+        self.view_files_checkbox.grid(row=2, column=0, sticky=tk.W, pady=2)
+        
+        # File paths input
+        ttk.Label(options_frame, text="  Files to view (comma-separated):", 
+                 font=('Helvetica', 8)).grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.files_entry = ttk.Entry(options_frame, width=60)
+        self.files_entry.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2, padx=(20, 0))
+        self.files_entry.insert(0, "/etc/passwd,/etc/hosts")
+        
         ttk.Label(options_frame, text="⚠️ Credential testing may trigger security alerts", 
-                 font=('Helvetica', 8), foreground='orange').grid(row=2, column=0, sticky=tk.W, pady=2)
+                 font=('Helvetica', 8), foreground='orange').grid(row=5, column=0, sticky=tk.W, pady=2)
         
         # Stealth options
         stealth_frame = ttk.LabelFrame(main_frame, text="Stealth Options (Less Detectable)", padding="10")
@@ -645,6 +757,17 @@ class TelnetEnumeratorGUI:
         # Get scan options
         extract_ntlm = self.extract_ntlm_var.get()
         test_credentials = self.test_credentials_var.get()
+        view_files = self.view_files_var.get()
+        
+        # Get file paths to view
+        files_to_view = []
+        if view_files and test_credentials:
+            files_str = self.files_entry.get().strip()
+            if files_str:
+                files_to_view = [f.strip() for f in files_str.split(',') if f.strip()]
+        
+        # Update enumerator with file viewing config
+        self.enumerator.files_to_view = files_to_view
         
         # Get stealth options
         randomize_order = self.randomize_order_var.get()
@@ -864,6 +987,28 @@ class TelnetEnumeratorGUI:
                     output.append(f"  Password:        {cred['password']}")
                     if cred.get('response'):
                         output.append(f"  Response:        {cred['response'][:100]}...")
+                    
+                    # Display viewed files if available
+                    if cred.get('files_viewed'):
+                        output.append(f"\n  📄 FILES VIEWED ({len(cred['files_viewed'])} file(s)):")
+                        for file_info in cred['files_viewed']:
+                            output.append(f"    Path:          {file_info['path']}")
+                            if file_info.get('content'):
+                                output.append(f"    Size:          {file_info.get('size', 0)} bytes")
+                                # Show first 500 chars of file content
+                                content_preview = file_info['content'][:500]
+                                output.append(f"    Content:")
+                                for line in content_preview.split('\n')[:10]:
+                                    output.append(f"      {line}")
+                                if len(file_info['content']) > 500:
+                                    output.append(f"      ... (truncated, {len(file_info['content'])} total bytes)")
+                            elif file_info.get('error'):
+                                output.append(f"    Error:         {file_info['error']}")
+                            output.append("    " + "·" * 72)
+                    
+                    if cred.get('file_view_error'):
+                        output.append(f"  File View Error: {cred['file_view_error']}")
+                    
                     output.append("  " + "-" * 76)
                 output.append("." * 80)
             
@@ -964,7 +1109,7 @@ class TelnetEnumeratorGUI:
                 with open(filename, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(['IP Address', 'Port', 'Status', 'Response Time (ms)', 
-                                   'Encryption Support', 'Banner', 'NTLM Info', 'Successful Credentials', 'Error', 'Timestamp'])
+                                   'Encryption Support', 'Banner', 'NTLM Info', 'Successful Credentials', 'Files Viewed', 'Error', 'Timestamp'])
                     for result in self.scan_results:
                         # Format NTLM info
                         ntlm_str = 'N/A'
@@ -976,11 +1121,22 @@ class TelnetEnumeratorGUI:
                         
                         # Format credential results
                         cred_str = 'N/A'
+                        files_str = 'N/A'
                         if result.get('credential_results'):
                             cred_parts = []
+                            file_parts = []
                             for cred in result['credential_results']:
                                 cred_parts.append(f"{cred['username']}:{cred['password']}")
+                                # Add file viewing info
+                                if cred.get('files_viewed'):
+                                    for file_info in cred['files_viewed']:
+                                        if file_info.get('content'):
+                                            file_parts.append(f"{file_info['path']} ({file_info.get('size', 0)} bytes)")
+                                        else:
+                                            file_parts.append(f"{file_info['path']} (error)")
                             cred_str = "; ".join(cred_parts)
+                            if file_parts:
+                                files_str = "; ".join(file_parts)
                         
                         writer.writerow([
                             result['ip'],
@@ -991,6 +1147,7 @@ class TelnetEnumeratorGUI:
                             result.get('banner', 'N/A'),
                             ntlm_str,
                             cred_str,
+                            files_str,
                             result.get('error', 'N/A'),
                             result.get('timestamp', 'N/A')
                         ])
