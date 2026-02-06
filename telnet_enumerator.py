@@ -23,6 +23,67 @@ class TelnetEnumerator:
         self.default_port = 23
         self.timeout = 3
     
+    def _check_encryption_support(self, sock: socket.socket) -> str:
+        """
+        Check if the Telnet server supports encryption
+        
+        Telnet encryption is negotiated using Telnet options as defined in:
+        - RFC 2946: Telnet Data Encryption Option
+        - RFC 854: Telnet Protocol Specification
+        
+        Args:
+            sock: Active socket connection to the telnet server
+            
+        Returns:
+            str: 'supported', 'not_supported', or 'unknown'
+        """
+        try:
+            # Telnet protocol constants
+            IAC = b'\xff'   # Interpret As Command
+            DO = b'\xfd'    # Request the other party to perform an option
+            DONT = b'\xfe'  # Request the other party not to perform an option
+            WILL = b'\xfb'  # Indicates willingness to perform an option
+            WONT = b'\xfc'  # Indicates refusal to perform an option
+            SB = b'\xfa'    # Subnegotiation begin
+            SE = b'\xf0'    # Subnegotiation end
+            
+            # Telnet option codes
+            ENCRYPT = b'\x26'  # Encryption option (38 decimal)
+            
+            # Set a short timeout for this operation
+            sock.settimeout(2)
+            
+            # First, receive any initial data/options from server
+            try:
+                initial_data = sock.recv(1024)
+            except socket.timeout:
+                initial_data = b''
+            
+            # Send IAC DO ENCRYPT to ask if server supports encryption
+            encryption_query = IAC + DO + ENCRYPT
+            sock.send(encryption_query)
+            
+            # Wait for response
+            time.sleep(0.5)
+            response = sock.recv(1024)
+            
+            # Parse the response for encryption support
+            if IAC + WILL + ENCRYPT in response:
+                return 'supported'
+            elif IAC + WONT + ENCRYPT in response:
+                return 'not_supported'
+            else:
+                # Check if the server sent any encryption-related subnegotiation
+                if ENCRYPT in response and SB in response:
+                    return 'supported'
+                # If no clear response, return unknown
+                return 'unknown'
+                
+        except socket.timeout:
+            return 'unknown'
+        except Exception:
+            return 'unknown'
+    
     def check_telnet(self, ip_address: str, port: int = 23) -> dict:
         """
         Check if telnet port is open on the specified IP address
@@ -32,7 +93,7 @@ class TelnetEnumerator:
             port: Port to check (default 23 for telnet)
             
         Returns:
-            dict with status, banner, error, and timing information
+            dict with status, banner, error, timing information, and encryption support
         """
         result = {
             'ip': ip_address,
@@ -41,6 +102,7 @@ class TelnetEnumerator:
             'banner': None,
             'error': None,
             'response_time': None,
+            'encryption_support': None,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -58,6 +120,13 @@ class TelnetEnumerator:
                 result['status'] = 'open'
                 result['response_time'] = round(connect_time * 1000, 2)  # Convert to milliseconds
                 
+                # Check for encryption support
+                try:
+                    result['encryption_support'] = self._check_encryption_support(sock)
+                except Exception as e:
+                    # Don't fail the entire check if encryption detection fails
+                    result['error'] = f"Encryption check failed: {str(e)}"
+                
                 # Try to grab banner
                 try:
                     sock.send(b'\r\n')
@@ -65,7 +134,10 @@ class TelnetEnumerator:
                     if banner:
                         result['banner'] = banner
                 except Exception as e:
-                    result['error'] = f"Banner grab failed: {str(e)}"
+                    if result['error']:
+                        result['error'] += f"; Banner grab failed: {str(e)}"
+                    else:
+                        result['error'] = f"Banner grab failed: {str(e)}"
             else:
                 result['response_time'] = round(connect_time * 1000, 2)
             
@@ -116,7 +188,7 @@ class TelnetEnumeratorGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(6, weight=1)
+        main_frame.rowconfigure(5, weight=1)
         
         # Title
         title_label = ttk.Label(main_frame, text="Telnet Port Enumerator - Advanced Edition", 
@@ -130,29 +202,22 @@ class TelnetEnumeratorGUI:
         self.ip_entry.insert(0, "127.0.0.1")
         ttk.Label(main_frame, text="(e.g., 192.168.1.0/24 or single IP)", font=('Helvetica', 8)).grid(row=1, column=2, sticky=tk.W)
         
-        # Port input
-        ttk.Label(main_frame, text="Port:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.port_entry = ttk.Entry(main_frame, width=30)
-        self.port_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        self.port_entry.insert(0, "23")
-        ttk.Label(main_frame, text="(default: 23 for telnet)", font=('Helvetica', 8)).grid(row=2, column=2, sticky=tk.W)
-        
         # Timeout input
-        ttk.Label(main_frame, text="Timeout (sec):").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="Timeout (sec):").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.timeout_entry = ttk.Entry(main_frame, width=30)
-        self.timeout_entry.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.timeout_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         self.timeout_entry.insert(0, "3")
         
         # Progress bar
-        ttk.Label(main_frame, text="Progress:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="Progress:").grid(row=3, column=0, sticky=tk.W, pady=5)
         self.progress_bar = ttk.Progressbar(main_frame, mode='determinate')
-        self.progress_bar.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.progress_bar.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         self.progress_label = ttk.Label(main_frame, text="0/0")
-        self.progress_label.grid(row=4, column=2, sticky=tk.W, pady=5)
+        self.progress_label.grid(row=3, column=2, sticky=tk.W, pady=5)
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=4, column=0, columnspan=3, pady=10)
         
         self.scan_button = ttk.Button(button_frame, text="Start Scan", command=self.start_scan)
         self.scan_button.grid(row=0, column=0, padx=5)
@@ -167,11 +232,11 @@ class TelnetEnumeratorGUI:
         self.export_button.grid(row=0, column=3, padx=5)
         
         # Results text area
-        ttk.Label(main_frame, text="Results:").grid(row=6, column=0, sticky=(tk.W, tk.N), pady=5)
+        ttk.Label(main_frame, text="Results:").grid(row=5, column=0, sticky=(tk.W, tk.N), pady=5)
         
         self.results_text = scrolledtext.ScrolledText(main_frame, width=90, height=25, 
                                                       wrap=tk.WORD, font=('Courier', 9))
-        self.results_text.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
+        self.results_text.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
                               pady=5, padx=5)
         
         # Status bar
@@ -179,23 +244,14 @@ class TelnetEnumeratorGUI:
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                               relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        status_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
     
     def validate_inputs(self) -> tuple:
         """Validate user inputs"""
         ip_address = self.ip_entry.get().strip()
-        port_input = self.port_entry.get().strip()
         
         if not ip_address:
             return False, "IP address is required"
-        
-        # Validate port input (single port only)
-        try:
-            port = int(port_input)
-            if port < 1 or port > 65535:
-                return False, "Port must be between 1 and 65535"
-        except ValueError:
-            return False, "Port must be a valid number"
         
         try:
             timeout = float(self.timeout_entry.get().strip())
@@ -229,7 +285,7 @@ class TelnetEnumeratorGUI:
         
         # Get values
         ip_address = self.ip_entry.get().strip()
-        port = int(self.port_entry.get().strip())
+        port = 23  # Hardcoded for telnet
         timeout = float(self.timeout_entry.get().strip())
         
         # Update enumerator timeout
@@ -369,6 +425,16 @@ class TelnetEnumeratorGUI:
             if result['response_time'] is not None:
                 output.append(f"Response Time:   {result['response_time']} ms")
             
+            # Display encryption support information
+            if result.get('encryption_support'):
+                enc_status = result['encryption_support']
+                if enc_status == 'supported':
+                    output.append(f"Encryption:      🔒 SUPPORTED")
+                elif enc_status == 'not_supported':
+                    output.append(f"Encryption:      ⚠️ NOT SUPPORTED")
+                else:
+                    output.append(f"Encryption:      ❓ UNKNOWN")
+            
             if result['status'] == 'open':
                 output.append("")
                 output.append("✓ PORT IS OPEN")
@@ -466,13 +532,14 @@ class TelnetEnumeratorGUI:
                 with open(filename, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(['IP Address', 'Port', 'Status', 'Response Time (ms)', 
-                                   'Banner', 'Error', 'Timestamp'])
+                                   'Encryption Support', 'Banner', 'Error', 'Timestamp'])
                     for result in self.scan_results:
                         writer.writerow([
                             result['ip'],
                             result['port'],
                             result['status'],
                             result.get('response_time', 'N/A'),
+                            result.get('encryption_support', 'N/A'),
                             result.get('banner', 'N/A'),
                             result.get('error', 'N/A'),
                             result.get('timestamp', 'N/A')
