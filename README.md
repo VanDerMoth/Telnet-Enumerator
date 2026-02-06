@@ -12,6 +12,8 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 - 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
 - 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
 - 📄 **File Viewing**: View files on the telnet server when valid credentials are found (useful for lateral movement)
+- 🔎 **Auto File Scrubbing**: Automatically enumerate ~14 common system files when credentials are found
+- 📑 **Tabbed Interface**: Separate tabs for scan results and file contents to prevent clutter
 - 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
 - 📊 **Detailed Results**: Comprehensive scan results with timestamps and statistics
@@ -63,7 +65,9 @@ python3 telnet_enumerator.py
 4. **Enable Scan Options** (Optional):
    - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
    - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
-   - **View Files**: When enabled with credential testing, attempts to view specified files on the target system when valid credentials are found
+   - **View Files**: When enabled with credential testing, attempts to view files on the target system when valid credentials are found
+     - **Auto-scrub common files**: Automatically tries ~14 common system files (Linux & Windows)
+     - **Custom files**: Specify your own comma-separated list of files to view
    
    ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
 
@@ -75,12 +79,16 @@ python3 telnet_enumerator.py
 
 6. **Click Start Scan**: Begin the enumeration
 
-7. **View Results**: Detailed results appear below with:
+7. **View Results**: Results are displayed in two tabs:
+   - **Main Results Tab**: Shows scan results with connection status, encryption support, NTLM details, successful credentials, and file view summaries
+   - **Files Viewed Tab**: Shows complete contents of all files retrieved from targets (when credentials are found)
+   
+   Main results include:
    - Connection status (Open/Closed/Timeout/Error)
    - Encryption support status (Supported/Not Supported/Unknown)
    - NTLM authentication details (if extracted)
    - Successful credential attempts (if tested)
-   - File contents from target system (if file viewing enabled and credentials found)
+   - File view summary with count (full content in Files Viewed tab)
    - Response time in milliseconds
    - Banner information
    - Timestamp
@@ -167,27 +175,40 @@ Tests the following common default credentials:
 
 The tool attempts to authenticate and reports successful logins with response snippets.
 
-### File Viewing for Lateral Movement
+### File Viewing and Auto-Scrubbing for Lateral Movement
 
 When valid credentials are discovered during credential testing, the tool can automatically attempt to view files on the target system. This feature is valuable for:
 - **Lateral Movement**: Quickly assess accessible information after gaining credentials
 - **Reconnaissance**: Identify system configuration and sensitive data
 - **Privilege Assessment**: Determine what files the compromised credentials can access
 
-**Configuration:**
-- Enable "View Files" checkbox (requires "Test Common Credentials" to be enabled)
-- Specify file paths to view in the input field (comma-separated)
-- Default paths include: `/etc/passwd`, `/etc/hosts`
-- Common useful paths:
-  - Linux: `/etc/passwd`, `/etc/shadow`, `/etc/hosts`, `/root/.ssh/authorized_keys`, `/home/*/.ssh/authorized_keys`
-  - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Users\Administrator\Desktop\*`
+**Configuration Options:**
+1. **Manual File Selection** (Default):
+   - Enable "View Files" checkbox (requires "Test Common Credentials" to be enabled)
+   - Specify file paths to view in the input field (comma-separated)
+   - Default paths include: `/etc/passwd`, `/etc/hosts`
+   - Common useful paths:
+     - Linux: `/etc/passwd`, `/etc/shadow`, `/etc/hosts`, `/root/.ssh/authorized_keys`, `/home/*/.ssh/authorized_keys`
+     - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Users\Administrator\Desktop\*`
+
+2. **Auto-Scrub Mode** (NEW):
+   - Enable "View Files" and "Auto-scrub common files" checkboxes
+   - Automatically attempts to read ~14 common system files
+   - Linux files: `/etc/passwd`, `/etc/hosts`, `/etc/hostname`, `/etc/issue`, `/etc/os-release`, `/proc/version`, `/proc/cpuinfo`, `/etc/ssh/sshd_config`, `/etc/network/interfaces`, `/root/.ssh/authorized_keys`, `/root/.bash_history`
+   - Windows files: `C:\Windows\System32\drivers\etc\hosts`, `C:\Windows\win.ini`, `C:\boot.ini`
+   - Ideal for quick reconnaissance when you want to gather as much information as possible
 
 **How it works:**
 1. When credentials successfully authenticate, the tool maintains the telnet session
-2. Attempts to read specified files using common commands (`cat`, `type`, `more`)
+2. Attempts to read specified or common files using standard commands (`cat`, `type`, `more`)
 3. Captures file contents (up to 2000 characters per file)
-4. Displays file contents in results along with credential information
-5. Reports errors if files cannot be read (permissions, non-existent, etc.)
+4. Main Results tab shows file count summary
+5. Files Viewed tab displays complete file contents with metadata (IP, credentials, timestamp, file path)
+6. Reports errors if files cannot be read (permissions, non-existent, etc.)
+
+**Display:**
+- **Main Results Tab**: Shows credential success and file view summary (e.g., "3/5 files successfully read")
+- **Files Viewed Tab**: Dedicated tab showing all file contents in detail, preventing clutter in main results
 
 ⚠️ **Warning**: File viewing is intrusive and will generate logs on the target system. Use only in authorized penetration testing scenarios.
 
