@@ -12,7 +12,7 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 - 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
 - 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
 - 📄 **File Viewing**: View files on the telnet server when valid credentials are found (useful for lateral movement)
-- 🔎 **Auto File Scrubbing**: Automatically enumerate ~14 common system files when credentials are found
+- 🔎 **Auto File Scrubbing**: Automatically discover and enumerate ALL text and image files on the target system when credentials are found
 - 📑 **Tabbed Interface**: Separate tabs for scan results and file contents to prevent clutter
 - 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
@@ -66,7 +66,7 @@ python3 telnet_enumerator.py
    - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
    - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
    - **View Files**: When enabled with credential testing, attempts to view files on the target system when valid credentials are found
-     - **Auto-scrub common files**: Automatically tries ~14 common system files (Linux & Windows)
+     - **Auto-scrub common files**: Automatically discovers ALL text and image files on the system (up to 100 files)
      - **Custom files**: Specify your own comma-separated list of files to view
    
    ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
@@ -193,16 +193,17 @@ When valid credentials are discovered during credential testing, the tool can au
 
 2. **Auto-Scrub Mode** (NEW):
    - Enable "View Files" and "Auto-scrub common files" checkboxes
-   - Automatically attempts to read ~14 common system files
-   - Linux files:
-     - `/etc/passwd`, `/etc/hosts`, `/etc/hostname`, `/etc/issue`
-     - `/etc/os-release`, `/proc/version`, `/proc/cpuinfo`
-     - `/etc/ssh/sshd_config`, `/etc/network/interfaces`
-     - `/root/.ssh/authorized_keys`, `/root/.bash_history`
-   - Windows files:
-     - `C:\Windows\System32\drivers\etc\hosts`
-     - `C:\Windows\win.ini`, `C:\boot.ini`
-   - Ideal for quick reconnaissance when you want to gather as much information as possible
+   - Automatically discovers and attempts to read ALL text and image files on the target system (up to 100 files)
+   - Supported file extensions:
+     - Text files: `.txt`, `.log`, `.conf`, `.config`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.ini`, `.sh`, `.bat`, `.ps1`
+     - Image files: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.svg`
+   - Discovery process:
+     - Linux: Uses `find` commands to search common directories (`/root`, `/home`, `/tmp`, `/var`, `/opt`, `/etc`)
+     - Windows: Uses `dir` commands to search user directories and Desktop folders
+     - Searches for files under 10MB in size
+     - Limits results to first 100 discovered files to prevent overwhelming output
+     - Falls back to common system files if discovery commands fail
+   - Ideal for CTF scenarios and thorough reconnaissance where you want to capture all accessible text and image files
 
 **How it works:**
 1. When credentials successfully authenticate, the tool maintains the telnet session

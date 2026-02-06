@@ -126,6 +126,36 @@ class TestTelnetEnumerator(unittest.TestCase):
         result = self.enumerator._view_files_via_telnet(sock, [])
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 0)
+    
+    def test_file_extensions_defined(self):
+        """Test that file extensions for discovery are defined"""
+        self.assertIsInstance(self.enumerator.TEXT_EXTENSIONS, list)
+        self.assertIsInstance(self.enumerator.IMAGE_EXTENSIONS, list)
+        self.assertGreater(len(self.enumerator.TEXT_EXTENSIONS), 0)
+        self.assertGreater(len(self.enumerator.IMAGE_EXTENSIONS), 0)
+        # Check some expected extensions
+        self.assertIn('txt', self.enumerator.TEXT_EXTENSIONS)
+        self.assertIn('jpg', self.enumerator.IMAGE_EXTENSIONS)
+        self.assertIn('png', self.enumerator.IMAGE_EXTENSIONS)
+    
+    def test_max_discovered_files_limit(self):
+        """Test that MAX_DISCOVERED_FILES is defined and reasonable"""
+        self.assertIsInstance(self.enumerator.MAX_DISCOVERED_FILES, int)
+        self.assertGreater(self.enumerator.MAX_DISCOVERED_FILES, 0)
+        self.assertLessEqual(self.enumerator.MAX_DISCOVERED_FILES, 1000)
+    
+    def test_discover_files_via_telnet_with_none_socket(self):
+        """Test file discovery with None socket returns empty list"""
+        # Should handle gracefully without crashing
+        result = self.enumerator._discover_files_via_telnet(None)
+        self.assertIsInstance(result, list)
+    
+    def test_auto_scrub_configuration(self):
+        """Test that auto_scrub_files can be configured"""
+        self.enumerator.auto_scrub_files = True
+        self.assertTrue(self.enumerator.auto_scrub_files)
+        self.enumerator.auto_scrub_files = False
+        self.assertFalse(self.enumerator.auto_scrub_files)
 
 
 class TestTelnetEnumeratorIntegration(unittest.TestCase):
