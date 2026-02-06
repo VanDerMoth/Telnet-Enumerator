@@ -39,6 +39,14 @@ class TelnetEnumerator:
         ('pi', 'raspberry'),
     ]
     
+    # File viewing constants
+    MAX_FILE_CONTENT_LENGTH = 2000  # Maximum characters to capture per file
+    FILE_PREVIEW_LENGTH = 500  # Maximum characters to display in preview
+    MAX_PREVIEW_LINES = 10  # Maximum lines to show in file preview
+    BUFFER_CLEAR_TIMEOUT = 0.5  # Timeout for clearing socket buffer (seconds)
+    COMMAND_DELAY = 0.5  # Delay after sending command (seconds)
+    RESPONSE_TIMEOUT = 1.0  # Timeout for receiving response (seconds)
+    
     def __init__(self):
         self.default_port = 23
         self.timeout = 3
@@ -259,7 +267,7 @@ class TelnetEnumerator:
                 
                 for cmd in commands:
                     # Clear buffer first
-                    sock.settimeout(0.5)
+                    sock.settimeout(self.BUFFER_CLEAR_TIMEOUT)
                     try:
                         sock.recv(4096)
                     except socket.timeout:
@@ -268,12 +276,12 @@ class TelnetEnumerator:
                     # Send command
                     sock.settimeout(self.timeout)
                     sock.send((cmd + '\r\n').encode('utf-8'))
-                    time.sleep(0.5)
+                    time.sleep(self.COMMAND_DELAY)
                     
                     # Receive response
                     try:
                         response = b''
-                        sock.settimeout(1.0)
+                        sock.settimeout(self.RESPONSE_TIMEOUT)
                         while True:
                             try:
                                 chunk = sock.recv(4096)
@@ -298,7 +306,7 @@ class TelnetEnumerator:
                 if file_content:
                     viewed_files.append({
                         'path': file_path,
-                        'content': file_content[:2000],  # Limit to 2000 chars per file
+                        'content': file_content[:self.MAX_FILE_CONTENT_LENGTH],
                         'size': len(file_content)
                     })
                 else:
@@ -995,12 +1003,12 @@ class TelnetEnumeratorGUI:
                             output.append(f"    Path:          {file_info['path']}")
                             if file_info.get('content'):
                                 output.append(f"    Size:          {file_info.get('size', 0)} bytes")
-                                # Show first 500 chars of file content
-                                content_preview = file_info['content'][:500]
+                                # Show preview of file content
+                                content_preview = file_info['content'][:self.enumerator.FILE_PREVIEW_LENGTH]
                                 output.append(f"    Content:")
-                                for line in content_preview.split('\n')[:10]:
+                                for line in content_preview.split('\n')[:self.enumerator.MAX_PREVIEW_LINES]:
                                     output.append(f"      {line}")
-                                if len(file_info['content']) > 500:
+                                if len(file_info['content']) > self.enumerator.FILE_PREVIEW_LENGTH:
                                     output.append(f"      ... (truncated, {len(file_info['content'])} total bytes)")
                             elif file_info.get('error'):
                                 output.append(f"    Error:         {file_info['error']}")
