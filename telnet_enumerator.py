@@ -22,6 +22,7 @@ class TelnetEnumerator:
     def __init__(self):
         self.default_port = 23
         self.timeout = 3
+        self.encryption_check_delay = 0.5  # Delay in seconds for encryption response
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -64,7 +65,7 @@ class TelnetEnumerator:
             sock.send(encryption_query)
             
             # Wait for response
-            time.sleep(0.5)
+            time.sleep(self.encryption_check_delay)
             response = sock.recv(1024)
             
             # Parse the response for encryption support
