@@ -27,6 +27,7 @@ class TestTelnetEnumerator(unittest.TestCase):
         self.assertEqual(self.enumerator.jitter_min, 0.0)
         self.assertEqual(self.enumerator.jitter_max, 0.0)
         self.assertEqual(self.enumerator.randomize_order, False)
+        self.assertEqual(self.enumerator.randomize_source_port, False)
     
     def test_default_credentials_format(self):
         """Test that default credentials are properly formatted"""
@@ -93,10 +94,12 @@ class TestTelnetEnumerator(unittest.TestCase):
     def test_stealth_options_configuration(self):
         """Test that stealth options can be configured"""
         self.enumerator.randomize_order = True
+        self.enumerator.randomize_source_port = True
         self.enumerator.jitter_min = 0.5
         self.enumerator.jitter_max = 2.0
         
         self.assertTrue(self.enumerator.randomize_order)
+        self.assertTrue(self.enumerator.randomize_source_port)
         self.assertEqual(self.enumerator.jitter_min, 0.5)
         self.assertEqual(self.enumerator.jitter_max, 2.0)
     

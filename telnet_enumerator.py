@@ -47,6 +47,7 @@ class TelnetEnumerator:
         self.jitter_min = 0.0  # Minimum delay between scans (seconds)
         self.jitter_max = 0.0  # Maximum delay between scans (seconds)
         self.randomize_order = False  # Whether to randomize scan order
+        self.randomize_source_port = False  # Whether to randomize source port for stealth
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -353,7 +354,7 @@ class TelnetEnumerator:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             
             # Randomize source port for stealth (bind to random high port)
-            if self.randomize_order:  # Reuse this flag for source port randomization
+            if self.randomize_source_port:
                 try:
                     random_port = random.randint(10000, 65000)
                     sock.bind(('', random_port))
@@ -648,6 +649,7 @@ class TelnetEnumeratorGUI:
         
         # Configure stealth settings
         self.enumerator.randomize_order = randomize_order
+        self.enumerator.randomize_source_port = randomize_order  # Use same control for both
         if use_jitter:
             self.enumerator.jitter_min = 0.5
             self.enumerator.jitter_max = 2.0
