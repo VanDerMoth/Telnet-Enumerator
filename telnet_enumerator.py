@@ -194,7 +194,7 @@ class TelnetEnumerator:
                                     target_name = ntlm_data[target_name_offset:target_name_offset + target_name_len].decode('utf-16-le', errors='ignore')
                                     if target_name:
                                         ntlm_info['target_name'] = target_name
-                                except:
+                                except (UnicodeDecodeError, AttributeError):
                                     pass
                         
                         # Extract challenge (8 bytes at offset 24)
@@ -215,14 +215,14 @@ class TelnetEnumerator:
                                 minor = version_data[1]
                                 build = struct.unpack('<H', version_data[2:4])[0]
                                 ntlm_info['version'] = f"{major}.{minor}.{build}"
-                            except:
+                            except (struct.error, IndexError):
                                 pass
                         
                         return ntlm_info
             
             return None
             
-        except Exception:
+        except (struct.error, IndexError, ValueError):
             return None
     
     def _test_credentials(self, ip_address: str, port: int, credentials: List[Tuple[str, str]]) -> List[Dict]:
@@ -251,7 +251,7 @@ class TelnetEnumerator:
                     time.sleep(0.5)
                     try:
                         banner = sock.recv(1024).decode('utf-8', errors='ignore')
-                    except:
+                    except (socket.error, OSError):
                         banner = ""
                     
                     # Send username
@@ -260,7 +260,7 @@ class TelnetEnumerator:
                     
                     try:
                         response = sock.recv(1024).decode('utf-8', errors='ignore')
-                    except:
+                    except (socket.error, OSError):
                         response = ""
                     
                     # Send password
@@ -269,7 +269,7 @@ class TelnetEnumerator:
                     
                     try:
                         final_response = sock.recv(1024).decode('utf-8', errors='ignore')
-                    except:
+                    except (socket.error, OSError):
                         final_response = ""
                     
                     # Check for successful login indicators
@@ -300,7 +300,8 @@ class TelnetEnumerator:
                 
                 sock.close()
                 
-            except Exception:
+            except (socket.error, OSError):
+                # Network errors are expected during credential testing
                 pass
             
             # Small delay between attempts to avoid overwhelming the server
@@ -417,11 +418,12 @@ class TelnetEnumeratorGUI:
     
     # Constants
     MAX_BANNER_LINES = 10
+    WINDOW_HEIGHT = 750
     
     def __init__(self, root):
         self.root = root
         self.root.title("Telnet Enumerator - Advanced Edition")
-        self.root.geometry("900x750")
+        self.root.geometry(f"900x{self.WINDOW_HEIGHT}")
         self.root.resizable(True, True)
         
         self.enumerator = TelnetEnumerator()
