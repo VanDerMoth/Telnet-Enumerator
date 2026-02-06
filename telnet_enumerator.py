@@ -1240,13 +1240,19 @@ class TelnetEnumeratorGUI:
     
     def start_scan(self):
         """Start the telnet enumeration scan"""
+        logger.info("=" * 80)
+        logger.info("Starting new scan session")
+        logger.info("=" * 80)
+        
         valid, error = self.validate_inputs()
         
         if not valid:
+            logger.warning(f"Validation failed: {error}")
             self.append_result(f"Error: {error}\n")
             return
         
         if self.is_scanning:
+            logger.warning("Scan already in progress")
             messagebox.showwarning("Scan in Progress", "A scan is already running")
             return
         
@@ -1263,6 +1269,8 @@ class TelnetEnumeratorGUI:
         timeout = float(self.timeout_entry.get().strip())
         threads = int(self.threads_entry.get().strip())
         
+        logger.info(f"Scan configuration: IP={ip_address}, Port={port}, Timeout={timeout}s, Threads={threads}")
+        
         # Update enumerator timeout
         self.enumerator.timeout = timeout
         self.enumerator.max_workers = threads
@@ -1273,6 +1281,9 @@ class TelnetEnumeratorGUI:
         view_files = self.view_files_var.get()
         auto_scrub = self.auto_scrub_var.get()
         
+        logger.info(f"Scan options: NTLM={extract_ntlm}, Credentials={test_credentials}, "
+                   f"ViewFiles={view_files}, AutoDiscovery={auto_scrub}")
+        
         # Get file paths to view
         files_to_view = []
         if view_files and test_credentials:
@@ -1280,6 +1291,7 @@ class TelnetEnumeratorGUI:
                 # Auto-discover mode: will discover files through enumeration
                 self.enumerator.auto_scrub_files = True
                 self.enumerator.files_to_view = []
+                logger.info("File viewing mode: Auto-discovery enabled")
             else:
                 # Manual mode: use specified files
                 self.enumerator.auto_scrub_files = False
@@ -1287,9 +1299,11 @@ class TelnetEnumeratorGUI:
                 if files_str:
                     files_to_view = [f.strip() for f in files_str.split(',') if f.strip()]
                 self.enumerator.files_to_view = files_to_view
+                logger.info(f"File viewing mode: Manual - {len(files_to_view)} files specified")
         else:
             self.enumerator.auto_scrub_files = False
             self.enumerator.files_to_view = []
+            logger.info("File viewing: Disabled")
         
         # Get stealth options
         randomize_order = self.randomize_order_var.get()
@@ -1305,6 +1319,8 @@ class TelnetEnumeratorGUI:
             self.enumerator.jitter_min = 0.0
             self.enumerator.jitter_max = 0.0
         
+        logger.info(f"Stealth options: Randomize={randomize_order}, Jitter={use_jitter}")
+        
         # Start scan in separate thread
         self.scan_thread = threading.Thread(
             target=self.run_scan,
@@ -1312,6 +1328,7 @@ class TelnetEnumeratorGUI:
             daemon=True
         )
         self.scan_thread.start()
+        logger.info("Scan thread started")
     
     def stop_scan(self):
         """Stop the current scan"""
@@ -1514,8 +1531,22 @@ class TelnetEnumeratorGUI:
                     if cred.get('files_viewed'):
                         num_files = len(cred['files_viewed'])
                         num_success = sum(1 for f in cred['files_viewed'] if f.get('content'))
+                        num_errors = sum(1 for f in cred['files_viewed'] if f.get('error'))
+                        num_not_found = sum(1 for f in cred['files_viewed'] if f.get('error') and 
+                                          ('not found' in f.get('error', '').lower() or 
+                                           'no such file' in f.get('error', '').lower()))
+                        
                         output.append(f"\n  📄 FILES VIEWED: {num_success}/{num_files} files successfully read")
-                        output.append(f"     (See 'Files Viewed' tab for full content)")
+                        if num_not_found > 0:
+                            output.append(f"     ⚠️  {num_not_found} file(s) not found")
+                        if num_errors - num_not_found > 0:
+                            output.append(f"     ❌ {num_errors - num_not_found} file(s) had errors")
+                        output.append(f"     (See 'Files Viewed' tab for full content and details)")
+                        
+                        # Log the file viewing summary
+                        logger.info(f"Files viewed for {result['ip']}:{result['port']} - "
+                                  f"Success: {num_success}, Not Found: {num_not_found}, "
+                                  f"Errors: {num_errors - num_not_found}")
                         
                         # Store file data for the Files Viewed tab
                         for file_info in cred['files_viewed']:
@@ -1590,11 +1621,21 @@ class TelnetEnumeratorGUI:
         if not self.files_viewed_data:
             self.files_text.insert(tk.END, "No files have been viewed yet.\n\n")
             self.files_text.insert(tk.END, "Enable 'View Files' and 'Test Common Credentials' options\n")
-            self.files_text.insert(tk.END, "to automatically view files when valid credentials are found.")
+            self.files_text.insert(tk.END, "to automatically view files when valid credentials are found.\n\n")
+            self.files_text.insert(tk.END, "Tip: Enable 'Auto-discover files' to automatically find and view files\n")
+            self.files_text.insert(tk.END, "on the target system, or specify custom file paths to view.")
+            logger.debug("Files Viewed tab updated - no files to display")
             return
         
         # Store unfiltered data
         self.unfiltered_file_data = list(self.files_viewed_data)
+        
+        # Calculate statistics
+        total_files = len(self.files_viewed_data)
+        successful = sum(1 for f in self.files_viewed_data if f['file_info'].get('content'))
+        errors = sum(1 for f in self.files_viewed_data if f['file_info'].get('error'))
+        
+        logger.info(f"Files Viewed tab updated - Total: {total_files}, Success: {successful}, Errors: {errors}")
         
         # Build hierarchical tree structure
         self._populate_file_tree(self.files_viewed_data)
