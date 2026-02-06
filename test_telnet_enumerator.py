@@ -149,6 +149,7 @@ class TestTelnetEnumerator(unittest.TestCase):
         # Should handle gracefully without crashing
         result = self.enumerator._discover_files_via_telnet(None)
         self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 0, "Should return empty list for None socket")
     
     def test_auto_scrub_configuration(self):
         """Test that auto_scrub_files can be configured"""

