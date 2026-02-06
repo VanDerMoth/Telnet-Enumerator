@@ -322,7 +322,7 @@ class TelnetEnumerator:
     
     def _discover_files_via_telnet(self, sock: socket.socket) -> List[str]:
         """
-        Discover text and image files on the target system through telnet
+        Discover text, image files, and directories on the target system through telnet
         
         Args:
             sock: Active authenticated socket connection
@@ -344,16 +344,26 @@ class TelnetEnumerator:
         # Note: These commands search sensitive directories and assume proper access control
         # is in place. Errors from inaccessible directories are suppressed with 2>/dev/null
         discovery_commands = [
-            # Linux: find command with common directories and size limit (files < 10MB)
-            f'find /root /home /tmp /var /opt /etc -type f -size -10M 2>/dev/null | grep -E "({all_exts})" | head -n {self.MAX_DISCOVERED_FILES}',
-            # Windows: dir command for common locations
-            f'dir /s /b C:\\Users\\*.txt C:\\Users\\*.jpg C:\\Users\\*.png C:\\Users\\*.gif 2>nul | findstr /i ".txt .jpg .png .gif" | more +1',
-            # Alternative Windows with Desktop focus
-            f'dir /s /b C:\\Users\\*\\Desktop\\*.* 2>nul | findstr /i ".txt .jpg .png .gif .log" | more +1',
-            # Linux: simple ls in common directories
-            'ls -1 /root/*.txt /root/*.jpg /root/*.png /home/*/*.txt /home/*/*.jpg 2>/dev/null | head -n 50',
-            # Current directory search (works on both)
-            'ls -1 *.txt *.jpg *.png *.gif 2>/dev/null || dir /b *.txt *.jpg *.png *.gif 2>nul',
+            # Linux: Comprehensive find command for all file types
+            f'find / -type f -size -10M 2>/dev/null | grep -E "({all_exts})" | head -n {self.MAX_DISCOVERED_FILES}',
+            # Linux: Find files in common directories with more detail
+            f'find /root /home /tmp /var /opt /etc /usr/local -type f -size -10M 2>/dev/null | grep -E "({all_exts})" | head -n {self.MAX_DISCOVERED_FILES}',
+            # Linux: List all files recursively in home directories
+            'find /root /home -type f -size -10M 2>/dev/null | head -n 100',
+            # Linux: Find recently modified files
+            'find /root /home /tmp -type f -mtime -30 -size -10M 2>/dev/null | head -n 50',
+            # Windows: Comprehensive dir command for all drives
+            f'dir /s /b /a-d C:\\*.txt C:\\*.log C:\\*.conf C:\\*.config C:\\*.json C:\\*.xml 2>nul | findstr /i ".txt .log .conf .config .json .xml" | more +100',
+            # Windows: Search in Users directory
+            f'dir /s /b C:\\Users\\*.txt C:\\Users\\*.jpg C:\\Users\\*.png C:\\Users\\*.gif C:\\Users\\*.log 2>nul | findstr /i ".txt .jpg .png .gif .log" | more +1',
+            # Windows: Desktop and Documents focus
+            f'dir /s /b C:\\Users\\*\\Desktop\\*.* C:\\Users\\*\\Documents\\*.* 2>nul | findstr /i ".txt .jpg .png .gif .log .doc .pdf" | more +1',
+            # Linux: simple ls in common directories (broader search)
+            'ls -1 /root/* /home/*/* /tmp/* 2>/dev/null | grep -E "\\.(txt|jpg|png|gif|log|conf|json|xml)$" | head -n 100',
+            # Current directory recursive search
+            'find . -type f -maxdepth 3 2>/dev/null | head -n 50',
+            # List current directory
+            'ls -la 2>/dev/null || dir 2>nul',
         ]
         
         for cmd in discovery_commands:
@@ -400,8 +410,12 @@ class TelnetEnumerator:
                         if ':' in line[:20] and '@' in line[:20]:  # Likely a prompt like 'user@host:~$'
                             continue
                             
-                        # Check if line contains valid file extensions
-                        if any(line.lower().endswith(f'.{ext}') for ext in all_extensions):
+                        # Check if line contains valid file extensions or is a path
+                        is_valid_file = any(line.lower().endswith(f'.{ext}') for ext in all_extensions)
+                        # Also accept paths that look like files (contain . in last part after /)
+                        is_potential_file = ('/' in line or '\\' in line) and '.' in line.split('/')[-1].split('\\')[-1]
+                        
+                        if is_valid_file or is_potential_file:
                             # Extract file path - handle paths with spaces by taking everything
                             # that looks like a valid path (starts with / or C:\ or is relative)
                             cleaned = line
@@ -413,19 +427,22 @@ class TelnetEnumerator:
                             
                             # If there are spaces and it doesn't start with a path indicator,
                             # it might be command output with extra info - take last token
-                            if ' ' in cleaned and not cleaned.startswith('/') and not cleaned[1:3] == ':\\':
+                            if ' ' in cleaned and not cleaned.startswith('/') and not (len(cleaned) > 2 and cleaned[1] == ':'):
                                 # This might be output like "Found: /path/to/file.txt"
                                 # Try to extract path-like token
                                 tokens = cleaned.split()
                                 for token in reversed(tokens):  # Check from end
-                                    if any(token.lower().endswith(f'.{ext}') for ext in all_extensions):
+                                    if any(token.lower().endswith(f'.{ext}') for ext in all_extensions) or ('/' in token or '\\' in token):
                                         cleaned = token
                                         break
                             
                             if cleaned and cleaned not in discovered_files:
-                                discovered_files.append(cleaned)
-                                if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
-                                    break
+                                # Validate it's actually a file path (not a command or other text)
+                                if len(cleaned) > 2 and (cleaned.startswith('/') or cleaned.startswith('./') or 
+                                                        cleaned.startswith('..') or (len(cleaned) > 2 and cleaned[1] == ':')):
+                                    discovered_files.append(cleaned)
+                                    if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
+                                        break
                 
             except Exception:
                 # Silently continue to next discovery method
