@@ -357,7 +357,10 @@ class TelnetEnumerator:
             if self.randomize_source_port:
                 try:
                     random_port = random.randint(10000, 65000)
-                    sock.bind(('', random_port))
+                    # Bind to loopback or any interface depending on target IP
+                    # For client sockets, binding to '' (any interface) is standard practice
+                    # as we're making outbound connections, not listening for inbound
+                    sock.bind(('0.0.0.0', random_port))
                 except (OSError, socket.error):
                     # If binding fails, proceed without source port randomization
                     pass
