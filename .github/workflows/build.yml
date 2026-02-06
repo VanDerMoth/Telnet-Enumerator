@@ -30,7 +30,7 @@ jobs:
         
     - name: Build Linux executable
       run: |
-        pyinstaller --onefile --windowed --name telnet-enumerator telnet_enumerator.py
+        pyinstaller --onefile --name telnet-enumerator telnet_enumerator.py
         
     - name: List build artifacts
       run: |
