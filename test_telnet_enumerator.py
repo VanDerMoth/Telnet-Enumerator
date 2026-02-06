@@ -107,6 +107,25 @@ class TestTelnetEnumerator(unittest.TestCase):
         """Test that concurrent workers can be configured"""
         self.enumerator.max_workers = 20
         self.assertEqual(self.enumerator.max_workers, 20)
+    
+    def test_files_to_view_initialization(self):
+        """Test that files_to_view is initialized correctly"""
+        self.assertIsInstance(self.enumerator.files_to_view, list)
+        self.assertEqual(len(self.enumerator.files_to_view), 0)
+    
+    def test_files_to_view_configuration(self):
+        """Test that files_to_view can be configured"""
+        test_files = ['/etc/passwd', '/etc/hosts']
+        self.enumerator.files_to_view = test_files
+        self.assertEqual(self.enumerator.files_to_view, test_files)
+    
+    def test_view_files_via_telnet_empty_list(self):
+        """Test file viewing with empty file list"""
+        # Create a mock socket (won't actually be used)
+        sock = None
+        result = self.enumerator._view_files_via_telnet(sock, [])
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 0)
 
 
 class TestTelnetEnumeratorIntegration(unittest.TestCase):
