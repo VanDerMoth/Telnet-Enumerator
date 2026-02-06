@@ -12,7 +12,7 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 - 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
 - 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
 - 📄 **File Viewing**: View files on the telnet server when valid credentials are found (useful for lateral movement)
-- 🔎 **Auto File Scrubbing**: Automatically discover and enumerate text/image files (up to 100) plus common system files when credentials are found
+- 🔎 **Auto File Discovery**: Automatically discover and enumerate text/image files (up to 100) through directory enumeration when credentials are found
 - 📑 **Tabbed Interface**: Separate tabs for scan results and file contents to prevent clutter
 - 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
@@ -66,7 +66,7 @@ python3 telnet_enumerator.py
    - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
    - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
    - **View Files**: When enabled with credential testing, attempts to view files on the target system when valid credentials are found
-     - **Auto-scrub common files**: Automatically discovers text/image files plus common system files (up to 100 total files)
+     - **Auto-discover files**: Automatically discovers text/image files through directory enumeration (up to 100 files)
      - **Custom files**: Specify your own comma-separated list of files to view
    
    ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
@@ -175,7 +175,7 @@ Tests the following common default credentials:
 
 The tool attempts to authenticate and reports successful logins with response snippets.
 
-### File Viewing and Auto-Scrubbing for Lateral Movement
+### File Viewing and Auto-Discovery for Lateral Movement
 
 When valid credentials are discovered during credential testing, the tool can automatically attempt to view files on the target system. This feature is valuable for:
 - **Lateral Movement**: Quickly assess accessible information after gaining credentials
@@ -191,24 +191,19 @@ When valid credentials are discovered during credential testing, the tool can au
      - Linux: `/etc/passwd`, `/etc/shadow`, `/etc/hosts`, `/root/.ssh/authorized_keys`, `/home/*/.ssh/authorized_keys`
      - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Users\Administrator\Desktop\*`
 
-2. **Auto-Scrub Mode** (ENHANCED):
-   - Enable "View Files" and "Auto-scrub common files" checkboxes
-   - Automatically attempts to read discovered text/image files plus common system files (up to 100 total files)
-   - **System files included** (62 files - always prioritized):
-     - Linux: `/etc/passwd`, `/etc/hosts`, `/etc/hostname`, `/etc/issue`, `/etc/os-release`, `/proc/version`, `/proc/cpuinfo`, `/etc/ssh/sshd_config`, `/etc/network/interfaces`, `/root/.ssh/authorized_keys`, `/root/.bash_history`, plus CTF files
-     - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Windows\win.ini`, `C:\boot.ini`, plus CTF files
-   - **Enhanced file discovery** (up to ~38 additional files):
+2. **Auto-Discovery Mode**:
+   - Enable "View Files" and "Auto-discover files" checkboxes
+   - Automatically discovers and reads files through directory enumeration (up to 100 files)
+   - **File discovery process**:
      - Text files: `.txt`, `.log`, `.conf`, `.config`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.ini`, `.sh`, `.bat`, `.ps1`
      - Image files: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.svg`
-   - **Comprehensive discovery process**:
+   - **Comprehensive discovery**:
      - Linux: Uses `find` commands to search entire filesystem and common directories (`/root`, `/home`, `/tmp`, `/var`, `/opt`, `/etc`, `/usr/local`)
      - Windows: Uses `dir` commands to search all drives, user directories, Desktop and Documents folders
      - Searches for files under 10MB in size
      - Includes recently modified files (last 30 days)
      - Searches current directory and subdirectories
-     - Combines discovered files with known system files for comprehensive coverage
-     - System files are prioritized; discovered files fill remaining slots up to 100 total
-   - Ideal for CTF scenarios and thorough reconnaissance where you want maximum file coverage
+   - Ideal for CTF scenarios and thorough reconnaissance where you want to discover what's accessible
 
 **How it works:**
 1. When credentials successfully authenticate, the tool maintains the telnet session
