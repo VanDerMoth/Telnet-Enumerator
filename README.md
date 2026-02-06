@@ -194,8 +194,14 @@ When valid credentials are discovered during credential testing, the tool can au
 2. **Auto-Scrub Mode** (NEW):
    - Enable "View Files" and "Auto-scrub common files" checkboxes
    - Automatically attempts to read ~14 common system files
-   - Linux files: `/etc/passwd`, `/etc/hosts`, `/etc/hostname`, `/etc/issue`, `/etc/os-release`, `/proc/version`, `/proc/cpuinfo`, `/etc/ssh/sshd_config`, `/etc/network/interfaces`, `/root/.ssh/authorized_keys`, `/root/.bash_history`
-   - Windows files: `C:\Windows\System32\drivers\etc\hosts`, `C:\Windows\win.ini`, `C:\boot.ini`
+   - Linux files:
+     - `/etc/passwd`, `/etc/hosts`, `/etc/hostname`, `/etc/issue`
+     - `/etc/os-release`, `/proc/version`, `/proc/cpuinfo`
+     - `/etc/ssh/sshd_config`, `/etc/network/interfaces`
+     - `/root/.ssh/authorized_keys`, `/root/.bash_history`
+   - Windows files:
+     - `C:\Windows\System32\drivers\etc\hosts`
+     - `C:\Windows\win.ini`, `C:\boot.ini`
    - Ideal for quick reconnaissance when you want to gather as much information as possible
 
 **How it works:**
