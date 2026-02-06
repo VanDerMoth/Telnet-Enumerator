@@ -18,6 +18,50 @@ import base64
 import struct
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+from logging.handlers import RotatingFileHandler
+import traceback
+
+
+# Configure logging
+def setup_logging():
+    """Set up logging configuration for the application"""
+    # Create logger
+    logger = logging.getLogger('telnet_enumerator')
+    logger.setLevel(logging.DEBUG)
+    
+    # Create file handler with rotation (max 5MB, keep 3 backups)
+    log_file = 'telnet_enumerator.log'
+    file_handler = RotatingFileHandler(
+        log_file, 
+        maxBytes=5*1024*1024,  # 5 MB
+        backupCount=3
+    )
+    file_handler.setLevel(logging.DEBUG)
+    
+    # Create console handler for warnings and errors
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Add formatter to handlers
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers to logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+
+# Initialize logger
+logger = setup_logging()
 
 
 class TelnetEnumerator:
@@ -357,6 +401,7 @@ class TelnetEnumerator:
         Returns:
             List of discovered file paths (up to MAX_DISCOVERED_FILES)
         """
+        logger.info("Starting file discovery via telnet")
         discovered_files = []
         
         # Combine extensions once for efficiency
@@ -389,11 +434,14 @@ class TelnetEnumerator:
             'ls -la 2>/dev/null || dir 2>nul',
         ]
         
-        for cmd in discovery_commands:
+        for cmd_idx, cmd in enumerate(discovery_commands):
             if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
+                logger.info(f"Reached max discovered files limit ({self.MAX_DISCOVERED_FILES})")
                 break
                 
             try:
+                logger.debug(f"Attempting discovery command {cmd_idx + 1}/{len(discovery_commands)}: {cmd[:80]}...")
+                
                 # Clear any pending data
                 sock.settimeout(self.BUFFER_CLEAR_TIMEOUT)
                 try:
@@ -417,13 +465,16 @@ class TelnetEnumerator:
                         else:
                             break
                 except socket.timeout:
+                    logger.debug(f"Timeout reading response for command {cmd_idx + 1}")
                     pass
                 
                 # Parse response to extract file paths
                 if response:
                     response_text = response.decode('utf-8', errors='ignore')
                     lines = response_text.split('\n')
+                    logger.debug(f"Command {cmd_idx + 1} returned {len(lines)} lines")
                     
+                    files_found_in_cmd = 0
                     for line in lines:
                         line = line.strip()
                         # Filter common shell prompts (more comprehensive)
@@ -461,12 +512,27 @@ class TelnetEnumerator:
                                 # Validate it's actually a file path using helper function
                                 if self._is_valid_file_path(cleaned):
                                     discovered_files.append(cleaned)
+                                    files_found_in_cmd += 1
+                                    logger.debug(f"Discovered file: {cleaned}")
                                     if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
                                         break
+                    
+                    if files_found_in_cmd > 0:
+                        logger.info(f"Command {cmd_idx + 1} discovered {files_found_in_cmd} files")
+                    else:
+                        logger.debug(f"Command {cmd_idx + 1} discovered no files")
+                else:
+                    logger.debug(f"Command {cmd_idx + 1} returned no response")
                 
-            except Exception:
-                # Silently continue to next discovery method
+            except Exception as e:
+                # Log the exception but continue to next discovery method
+                logger.warning(f"Exception in discovery command {cmd_idx + 1}: {type(e).__name__}: {e}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
                 continue
+        
+        logger.info(f"File discovery complete. Total files discovered: {len(discovered_files)}")
+        if discovered_files:
+            logger.debug(f"Discovered files: {discovered_files}")
         
         return discovered_files
     
@@ -481,9 +547,11 @@ class TelnetEnumerator:
         Returns:
             List of dicts containing file path and content
         """
+        logger.info(f"Starting to view {len(files_to_view)} files via telnet")
         viewed_files = []
         
-        for file_path in files_to_view:
+        for file_idx, file_path in enumerate(files_to_view):
+            logger.debug(f"Attempting to view file {file_idx + 1}/{len(files_to_view)}: {file_path}")
             try:
                 # Common commands to read files (try multiple for compatibility)
                 commands = [
@@ -493,6 +561,7 @@ class TelnetEnumerator:
                 ]
                 
                 file_content = None
+                successful_cmd = None
                 
                 for cmd in commands:
                     # Clear buffer first
@@ -523,13 +592,21 @@ class TelnetEnumerator:
                         content = response.decode('utf-8', errors='ignore').strip()
                         
                         # Check if command was successful (not an error message)
-                        if content and not any(err in content.lower() for err in [
+                        error_keywords = [
                             'no such file', 'cannot open', 'not found', 
                             'permission denied', 'command not found', 'bad command'
-                        ]):
+                        ]
+                        has_error = any(err in content.lower() for err in error_keywords)
+                        
+                        if content and not has_error:
                             file_content = content
+                            successful_cmd = cmd
+                            logger.debug(f"Successfully read {file_path} using command: {cmd}")
                             break
-                    except (socket.error, OSError):
+                        elif has_error:
+                            logger.debug(f"Error reading {file_path} with {cmd}: {content[:100]}")
+                    except (socket.error, OSError) as e:
+                        logger.debug(f"Socket error reading {file_path} with {cmd}: {e}")
                         continue
                 
                 if file_content:
@@ -538,19 +615,28 @@ class TelnetEnumerator:
                         'content': file_content[:self.MAX_FILE_CONTENT_LENGTH],
                         'size': len(file_content)
                     })
+                    logger.info(f"Successfully viewed file: {file_path} ({len(file_content)} bytes)")
                 else:
+                    error_msg = 'Unable to read file or file not found'
                     viewed_files.append({
                         'path': file_path,
                         'content': None,
-                        'error': 'Unable to read file or file not found'
+                        'error': error_msg
                     })
+                    logger.warning(f"Failed to view file: {file_path} - {error_msg}")
                     
             except Exception as e:
+                error_msg = f"{type(e).__name__}: {e}"
                 viewed_files.append({
                     'path': file_path,
                     'content': None,
-                    'error': str(e)
+                    'error': error_msg
                 })
+                logger.error(f"Exception viewing file {file_path}: {error_msg}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
+        
+        success_count = sum(1 for f in viewed_files if f.get('content'))
+        logger.info(f"File viewing complete. Successfully viewed {success_count}/{len(files_to_view)} files")
         
         return viewed_files
     
@@ -566,9 +652,11 @@ class TelnetEnumerator:
         Returns:
             List of successful login attempts with details
         """
+        logger.info(f"Testing {len(credentials)} credential pairs for {ip_address}:{port}")
         successful_logins = []
         
-        for username, password in credentials:
+        for cred_idx, (username, password) in enumerate(credentials):
+            logger.debug(f"Testing credential {cred_idx + 1}/{len(credentials)}: {username}:{'*' * len(password)}")
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(self.timeout)
@@ -580,7 +668,8 @@ class TelnetEnumerator:
                     time.sleep(0.3)  # Reduced from 0.5 for speed
                     try:
                         banner = sock.recv(1024).decode('utf-8', errors='ignore')
-                    except (socket.error, OSError):
+                    except (socket.error, OSError) as e:
+                        logger.debug(f"Failed to receive banner: {e}")
                         banner = ""
                     
                     # Send username
@@ -589,7 +678,8 @@ class TelnetEnumerator:
                     
                     try:
                         response = sock.recv(1024).decode('utf-8', errors='ignore')
-                    except (socket.error, OSError):
+                    except (socket.error, OSError) as e:
+                        logger.debug(f"Failed to receive response after username: {e}")
                         response = ""
                     
                     # Send password
@@ -598,7 +688,8 @@ class TelnetEnumerator:
                     
                     try:
                         final_response = sock.recv(1024).decode('utf-8', errors='ignore')
-                    except (socket.error, OSError):
+                    except (socket.error, OSError) as e:
+                        logger.debug(f"Failed to receive response after password: {e}")
                         final_response = ""
                     
                     # Check for successful login indicators
@@ -621,6 +712,7 @@ class TelnetEnumerator:
                     
                     # If we see success indicators and no failure indicators, consider it successful
                     if has_success and not has_failure:
+                        logger.info(f"Successful login for {ip_address}:{port} with username: {username}")
                         login_result = {
                             'username': username,
                             'password': password,
@@ -631,40 +723,54 @@ class TelnetEnumerator:
                         files_to_try = []
                         if self.files_to_view:
                             files_to_try = self.files_to_view
+                            logger.debug(f"Using {len(files_to_try)} user-specified files to view")
                         elif self.auto_scrub_files:
                             # Auto-scrub mode: discover files through directory enumeration
+                            logger.info(f"Auto-discovery mode enabled, discovering files for {ip_address}:{port}")
                             try:
                                 # Discover files using directory traversal and enumeration
                                 discovered = self._discover_files_via_telnet(sock)
                                 if discovered:
                                     files_to_try = discovered
+                                    logger.info(f"Discovered {len(discovered)} files to view")
                                 else:
                                     files_to_try = []
+                                    logger.info("No files discovered")
                                 
                                 # Limit to MAX_DISCOVERED_FILES to avoid overwhelming output
                                 if len(files_to_try) > self.MAX_DISCOVERED_FILES:
+                                    logger.info(f"Limiting discovered files from {len(files_to_try)} to {self.MAX_DISCOVERED_FILES}")
                                     files_to_try = files_to_try[:self.MAX_DISCOVERED_FILES]
                                     
-                            except Exception:
+                            except Exception as e:
                                 # If discovery fails, no files to try
+                                logger.warning(f"File discovery failed: {type(e).__name__}: {e}")
+                                logger.debug(f"Traceback: {traceback.format_exc()}")
                                 files_to_try = []
                         
                         # If file viewing is enabled and we have files to view, try to read them
                         if files_to_try:
+                            logger.info(f"Attempting to view {len(files_to_try)} files for {ip_address}:{port}")
                             try:
                                 viewed_files = self._view_files_via_telnet(sock, files_to_try)
                                 if viewed_files:
                                     login_result['files_viewed'] = viewed_files
                             except Exception as e:
                                 # Don't fail the credential test if file viewing fails
-                                login_result['file_view_error'] = str(e)
+                                error_msg = str(e)
+                                login_result['file_view_error'] = error_msg
+                                logger.error(f"File viewing failed: {error_msg}")
+                                logger.debug(f"Traceback: {traceback.format_exc()}")
                         
                         successful_logins.append(login_result)
+                    else:
+                        logger.debug(f"Failed login for {ip_address}:{port} with username: {username}")
                 
                 sock.close()
                 
-            except (socket.error, OSError):
+            except (socket.error, OSError) as e:
                 # Network errors are expected during credential testing
+                logger.debug(f"Network error testing credential {username}: {e}")
                 pass
             
             # Small delay between attempts to avoid overwhelming the server
@@ -672,6 +778,7 @@ class TelnetEnumerator:
             if self.jitter_max == 0:
                 time.sleep(0.1)  # Reduced from 0.2 for speed
         
+        logger.info(f"Credential testing complete for {ip_address}:{port}. Successful logins: {len(successful_logins)}")
         return successful_logins
     
     def check_telnet(self, ip_address: str, port: int = 23, extract_ntlm: bool = False, test_credentials: bool = False) -> dict:
@@ -687,9 +794,12 @@ class TelnetEnumerator:
         Returns:
             dict with status, banner, error, timing information, encryption support, NTLM info, and credential test results
         """
+        logger.info(f"Starting telnet check for {ip_address}:{port}")
+        
         # Apply jitter/delay if configured
         if self.jitter_max > 0:
             delay = random.uniform(self.jitter_min, self.jitter_max)
+            logger.debug(f"Applying jitter delay: {delay:.2f}s")
             time.sleep(delay)
         
         result = {
@@ -717,8 +827,10 @@ class TelnetEnumerator:
                     # For client sockets, binding to '' (any interface) is standard practice
                     # as we're making outbound connections, not listening for inbound
                     sock.bind(('0.0.0.0', random_port))
-                except (OSError, socket.error):
+                    logger.debug(f"Using random source port: {random_port}")
+                except (OSError, socket.error) as e:
                     # If binding fails, proceed without source port randomization
+                    logger.debug(f"Failed to bind to random port: {e}")
                     pass
             
             sock.settimeout(self.timeout)
@@ -731,13 +843,17 @@ class TelnetEnumerator:
             if connection_result == 0:
                 result['status'] = 'open'
                 result['response_time'] = round(connect_time * 1000, 2)  # Convert to milliseconds
+                logger.info(f"Port {ip_address}:{port} is OPEN (response time: {result['response_time']}ms)")
                 
                 # Check for encryption support
                 try:
                     result['encryption_support'] = self._check_encryption_support(sock)
+                    logger.debug(f"Encryption support: {result['encryption_support']}")
                 except Exception as e:
                     # Don't fail the entire check if encryption detection fails
-                    result['error'] = f"Encryption check failed: {str(e)}"
+                    error_msg = f"Encryption check failed: {str(e)}"
+                    result['error'] = error_msg
+                    logger.warning(f"{error_msg} for {ip_address}:{port}")
                 
                 # Try to grab banner
                 try:
@@ -745,18 +861,23 @@ class TelnetEnumerator:
                     banner = sock.recv(1024).decode('utf-8', errors='ignore').strip()
                     if banner:
                         result['banner'] = banner
+                        logger.debug(f"Banner grabbed: {banner[:100]}")
                 except Exception as e:
+                    error_msg = f"Banner grab failed: {str(e)}"
                     if result['error']:
-                        result['error'] += f"; Banner grab failed: {str(e)}"
+                        result['error'] += f"; {error_msg}"
                     else:
-                        result['error'] = f"Banner grab failed: {str(e)}"
+                        result['error'] = error_msg
+                    logger.debug(error_msg)
             else:
                 result['response_time'] = round(connect_time * 1000, 2)
+                logger.info(f"Port {ip_address}:{port} is CLOSED")
             
             sock.close()
             
             # Attempt NTLM extraction if requested and port is open
             if extract_ntlm and result['status'] == 'open':
+                logger.info(f"Attempting NTLM extraction for {ip_address}:{port}")
                 try:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(self.timeout)
@@ -764,34 +885,51 @@ class TelnetEnumerator:
                     ntlm_info = self._extract_ntlm_info(sock)
                     if ntlm_info:
                         result['ntlm_info'] = ntlm_info
+                        logger.info(f"NTLM info extracted for {ip_address}:{port}")
+                    else:
+                        logger.debug(f"No NTLM info available for {ip_address}:{port}")
                     sock.close()
                 except Exception as e:
+                    error_msg = f"NTLM extraction failed: {str(e)}"
                     if result['error']:
-                        result['error'] += f"; NTLM extraction failed: {str(e)}"
+                        result['error'] += f"; {error_msg}"
                     else:
-                        result['error'] = f"NTLM extraction failed: {str(e)}"
+                        result['error'] = error_msg
+                    logger.warning(f"{error_msg} for {ip_address}:{port}")
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
             
             # Test credentials if requested and port is open
             if test_credentials and result['status'] == 'open':
+                logger.info(f"Testing credentials for {ip_address}:{port}")
                 try:
                     credential_results = self._test_credentials(ip_address, port, self.DEFAULT_CREDENTIALS)
                     if credential_results:
                         result['credential_results'] = credential_results
-                except Exception as e:
-                    if result['error']:
-                        result['error'] += f"; Credential testing failed: {str(e)}"
+                        logger.info(f"Found {len(credential_results)} successful credential(s) for {ip_address}:{port}")
                     else:
-                        result['error'] = f"Credential testing failed: {str(e)}"
+                        logger.debug(f"No successful credentials for {ip_address}:{port}")
+                except Exception as e:
+                    error_msg = f"Credential testing failed: {str(e)}"
+                    if result['error']:
+                        result['error'] += f"; {error_msg}"
+                    else:
+                        result['error'] = error_msg
+                    logger.error(f"{error_msg} for {ip_address}:{port}")
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
             
         except socket.timeout:
             result['status'] = 'timeout'
             result['error'] = 'Connection timeout'
-        except socket.gaierror:
+            logger.info(f"Connection timeout for {ip_address}:{port}")
+        except socket.gaierror as e:
             result['status'] = 'error'
             result['error'] = 'Invalid IP address or hostname'
+            logger.error(f"Invalid IP/hostname: {ip_address} - {e}")
         except Exception as e:
             result['status'] = 'error'
             result['error'] = str(e)
+            logger.error(f"Exception checking {ip_address}:{port} - {type(e).__name__}: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
         
         return result
 
