@@ -1204,12 +1204,21 @@ class TelnetEnumeratorGUI:
                                                     wrap=tk.WORD, font=('Courier', 9))
         self.files_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Status bar
+        # Status bar with log file reference
+        status_frame = ttk.Frame(main_frame)
+        status_frame.grid(row=9, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        status_frame.columnconfigure(0, weight=1)
+        
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
-        status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
+        status_bar = ttk.Label(status_frame, textvariable=self.status_var, 
                               relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=9, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        status_bar.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        # Log file reference
+        log_label = ttk.Label(status_frame, text="📋 Logs: telnet_enumerator.log", 
+                             font=('TkDefaultFont', 8), foreground='gray', anchor=tk.E)
+        log_label.grid(row=0, column=1, sticky=tk.E, padx=5)
     
     def validate_inputs(self) -> tuple:
         """Validate user inputs"""
@@ -1398,12 +1407,14 @@ class TelnetEnumeratorGUI:
                     except Exception as e:
                         # Log error but continue with other scans
                         ip = future_to_ip[future]
+                        logger.error(f"Exception during scan of {ip}:{port} - {type(e).__name__}: {e}")
+                        logger.debug(f"Traceback: {traceback.format_exc()}")
                         error_result = {
                             'ip': ip,
                             'port': port,
                             'status': 'error',
                             'banner': None,
-                            'error': str(e),
+                            'error': f"{type(e).__name__}: {e}",
                             'response_time': None,
                             'encryption_support': None,
                             'ntlm_info': None,
@@ -1415,9 +1426,12 @@ class TelnetEnumeratorGUI:
                         self.result_queue.put(('progress', completed_scans, total_scans))
             
             # Send results
+            logger.info(f"Scan completed. Total results: {len(results)}")
             self.result_queue.put(('results', results))
             
         except Exception as e:
+            logger.error(f"Fatal error in scan thread: {type(e).__name__}: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             self.result_queue.put(('error', str(e)))
     
     def check_queue(self):
@@ -1440,13 +1454,17 @@ class TelnetEnumeratorGUI:
                     self.stop_button.config(state=tk.DISABLED)
                     self.is_scanning = False
                     self.status_var.set(f"Scan complete - {len(results)} target(s) scanned")
+                    logger.info(f"Scan session completed successfully")
                     
                 elif msg_type == 'error':
-                    self.append_result(f"Error: {data[0]}\n")
+                    error_msg = data[0]
+                    logger.error(f"Error reported to UI: {error_msg}")
+                    self.append_result(f"⚠️ Error: {error_msg}\n")
+                    self.append_result(f"Check telnet_enumerator.log for detailed error information.\n")
                     self.scan_button.config(state=tk.NORMAL)
                     self.stop_button.config(state=tk.DISABLED)
                     self.is_scanning = False
-                    self.status_var.set("Error occurred")
+                    self.status_var.set("Error occurred - check logs")
                 
         except queue.Empty:
             pass
