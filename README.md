@@ -5,8 +5,13 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 ## Features
 
 - 🖥️ **User-Friendly GUI**: Built with tkinter for easy cross-platform use
-- 🔍 **Port Scanning**: Enumerate telnet services on any IP address
+- 🔍 **IP Range Scanning**: Scan multiple IPs using CIDR notation (e.g., 192.168.1.0/24)
 - 📋 **Banner Grabbing**: Capture and display service banners
+- 🔬 **Service Detection**: Automatically identify services (Telnet, SSH, FTP, SMTP, HTTP)
+- ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
+- 📊 **Detailed Results**: Comprehensive scan results with timestamps and statistics
+- 💾 **Export Functionality**: Save results in CSV, JSON, or TXT format
+- 📈 **Progress Tracking**: Real-time progress bar for multi-target scans
 - ⚙️ **Configurable**: Customize port and timeout settings
 - 🚀 **Automated Builds**: GitHub Actions workflow builds Linux executables
 
@@ -40,11 +45,37 @@ python3 telnet_enumerator.py
 
 ### Using the GUI
 
-1. **Enter IP Address**: Type the target IP address (e.g., 192.168.1.1)
-2. **Set Port**: Default is 23 (standard telnet port)
+1. **Enter IP Address**: Type the target IP address or CIDR range
+   - Single IP: `192.168.1.1`
+   - IP Range: `192.168.1.0/24` (scans all hosts in the subnet)
+   
+2. **Set Port**: Default is 23 (standard telnet port), but can be changed to scan other services
+
 3. **Set Timeout**: Connection timeout in seconds (default: 3)
-4. **Click Scan**: Start the enumeration
-5. **View Results**: Results appear in the text area below
+
+4. **Click Start Scan**: Begin the enumeration
+
+5. **View Results**: Detailed results appear below with:
+   - Connection status (Open/Closed/Timeout/Error)
+   - Response time in milliseconds
+   - Service identification
+   - Banner information
+   - Timestamp
+   - Scan statistics summary
+
+6. **Export Results**: Save your scan results in CSV, JSON, or TXT format
+
+### Example Scans
+
+**Single IP Scan:**
+- IP: `192.168.1.100`
+- Port: `23`
+- Result: Detailed information about the single host
+
+**Multiple IP Scan:**
+- IP: `192.168.1.0/24`
+- Port: `23`
+- Result: Scan all 254 hosts in the subnet with progress tracking
 
 ### Building Executable
 
@@ -55,6 +86,40 @@ pyinstaller --onefile --windowed --name telnet-enumerator telnet_enumerator.py
 ```
 
 The executable will be created in the `dist/` directory.
+
+## Advanced Features
+
+### Service Detection
+The tool automatically identifies common services based on banner signatures:
+- Telnet (login prompts, telnet keywords)
+- SSH (OpenSSH, SSH version strings)
+- FTP (FTP server responses)
+- SMTP (mail server banners)
+- HTTP (web server headers)
+
+### Export Formats
+
+**CSV Export:**
+- Structured data with headers
+- Easy to import into spreadsheets or databases
+- Includes all scan details
+
+**JSON Export:**
+- Machine-readable format
+- Perfect for automation and integration
+- Full data structure preservation
+
+**TXT Export:**
+- Human-readable format
+- Preserves the exact output from the GUI
+- Ideal for reports and documentation
+
+### Performance Features
+
+- **Multi-threading**: Scans run in background threads to keep GUI responsive
+- **Progress Tracking**: Real-time progress bar shows scan completion
+- **Stop Scan**: Ability to cancel long-running scans
+- **Response Time Tracking**: Measure and display connection times
 
 ## GitHub Actions Workflow
 
