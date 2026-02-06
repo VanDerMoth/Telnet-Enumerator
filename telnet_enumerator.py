@@ -7,17 +7,35 @@ import socket
 import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 import queue
 import time
 import json
 import csv
 from datetime import datetime
 import ipaddress
+import base64
+import struct
 
 
 class TelnetEnumerator:
     """Main class for telnet port enumeration"""
+    
+    # Common default credentials for telnet services
+    DEFAULT_CREDENTIALS = [
+        ('admin', 'admin'),
+        ('admin', 'password'),
+        ('root', 'root'),
+        ('root', 'admin'),
+        ('admin', '1234'),
+        ('user', 'user'),
+        ('guest', 'guest'),
+        ('support', 'support'),
+        ('admin', ''),
+        ('root', ''),
+        ('ubnt', 'ubnt'),
+        ('pi', 'raspberry'),
+    ]
     
     def __init__(self):
         self.default_port = 23
@@ -85,16 +103,223 @@ class TelnetEnumerator:
         except Exception:
             return 'unknown'
     
-    def check_telnet(self, ip_address: str, port: int = 23) -> dict:
+    def _extract_ntlm_info(self, sock: socket.socket) -> Optional[Dict]:
+        """
+        Attempt to extract NTLM authentication information from telnet server
+        
+        Based on RFC 2941 (Telnet Authentication Option) and MS-TNAP specification.
+        
+        Args:
+            sock: Active socket connection to the telnet server
+            
+        Returns:
+            dict with NTLM information or None if not available
+        """
+        try:
+            # Telnet protocol constants
+            IAC = b'\xff'
+            WILL = b'\xfb'
+            DO = b'\xfd'
+            DONT = b'\xfe'
+            WONT = b'\xfc'
+            SB = b'\xfa'
+            SE = b'\xf0'
+            
+            # Authentication option (37 decimal, 0x25 hex)
+            AUTH = b'\x25'
+            
+            sock.settimeout(5)
+            
+            # Receive initial banner/negotiation
+            try:
+                initial_data = sock.recv(4096)
+            except socket.timeout:
+                initial_data = b''
+            
+            # Send WILL AUTHENTICATION to indicate we want to authenticate
+            auth_will = IAC + WILL + AUTH
+            sock.send(auth_will)
+            
+            time.sleep(0.5)
+            
+            # Receive server's response
+            try:
+                response = sock.recv(4096)
+            except socket.timeout:
+                return None
+            
+            # Look for authentication subnegotiation
+            if IAC + SB + AUTH in response:
+                # Extract NTLM challenge if present
+                return self._parse_ntlm_challenge(response)
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def _parse_ntlm_challenge(self, data: bytes) -> Optional[Dict]:
+        """
+        Parse NTLM challenge from telnet authentication data
+        
+        Args:
+            data: Raw bytes from telnet authentication negotiation
+            
+        Returns:
+            dict with parsed NTLM information or None
+        """
+        try:
+            ntlm_info = {}
+            
+            # Look for NTLM signature "NTLMSSP"
+            ntlm_sig = b'NTLMSSP\x00'
+            if ntlm_sig in data:
+                ntlm_offset = data.index(ntlm_sig)
+                ntlm_data = data[ntlm_offset:]
+                
+                # Parse message type (should be 0x02000000 for Type 2 Challenge)
+                if len(ntlm_data) >= 12:
+                    msg_type = struct.unpack('<I', ntlm_data[8:12])[0]
+                    
+                    if msg_type == 2:  # Type 2 Challenge Message
+                        ntlm_info['message_type'] = 'NTLM_CHALLENGE'
+                        
+                        # Extract target name (domain) if available
+                        if len(ntlm_data) >= 20:
+                            target_name_len = struct.unpack('<H', ntlm_data[12:14])[0]
+                            target_name_offset = struct.unpack('<I', ntlm_data[16:20])[0]
+                            
+                            if len(ntlm_data) >= target_name_offset + target_name_len:
+                                try:
+                                    target_name = ntlm_data[target_name_offset:target_name_offset + target_name_len].decode('utf-16-le', errors='ignore')
+                                    if target_name:
+                                        ntlm_info['target_name'] = target_name
+                                except:
+                                    pass
+                        
+                        # Extract challenge (8 bytes at offset 24)
+                        if len(ntlm_data) >= 32:
+                            challenge = ntlm_data[24:32]
+                            ntlm_info['challenge'] = base64.b64encode(challenge).decode('ascii')
+                        
+                        # Extract flags if available
+                        if len(ntlm_data) >= 24:
+                            flags = struct.unpack('<I', ntlm_data[20:24])[0]
+                            ntlm_info['flags'] = hex(flags)
+                        
+                        # Try to extract version information if available (offset 48)
+                        if len(ntlm_data) >= 56:
+                            try:
+                                version_data = ntlm_data[48:56]
+                                major = version_data[0]
+                                minor = version_data[1]
+                                build = struct.unpack('<H', version_data[2:4])[0]
+                                ntlm_info['version'] = f"{major}.{minor}.{build}"
+                            except:
+                                pass
+                        
+                        return ntlm_info
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def _test_credentials(self, ip_address: str, port: int, credentials: List[Tuple[str, str]]) -> List[Dict]:
+        """
+        Test a list of credentials against the telnet server
+        
+        Args:
+            ip_address: Target IP address
+            port: Target port
+            credentials: List of (username, password) tuples to test
+            
+        Returns:
+            List of successful login attempts with details
+        """
+        successful_logins = []
+        
+        for username, password in credentials:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout)
+                
+                connection_result = sock.connect_ex((ip_address, port))
+                
+                if connection_result == 0:
+                    # Wait for initial banner/prompt
+                    time.sleep(0.5)
+                    try:
+                        banner = sock.recv(1024).decode('utf-8', errors='ignore')
+                    except:
+                        banner = ""
+                    
+                    # Send username
+                    sock.send((username + '\r\n').encode('utf-8'))
+                    time.sleep(0.5)
+                    
+                    try:
+                        response = sock.recv(1024).decode('utf-8', errors='ignore')
+                    except:
+                        response = ""
+                    
+                    # Send password
+                    sock.send((password + '\r\n').encode('utf-8'))
+                    time.sleep(0.5)
+                    
+                    try:
+                        final_response = sock.recv(1024).decode('utf-8', errors='ignore')
+                    except:
+                        final_response = ""
+                    
+                    # Check for successful login indicators
+                    # Common success indicators in responses
+                    success_indicators = [
+                        'welcome', 'logged in', 'login successful', 
+                        '$', '#', '>', 'shell', 'prompt', 'success'
+                    ]
+                    
+                    # Common failure indicators
+                    failure_indicators = [
+                        'incorrect', 'failed', 'denied', 'invalid',
+                        'login failed', 'authentication failed', 'bad password'
+                    ]
+                    
+                    response_lower = (response + final_response).lower()
+                    
+                    has_success = any(indicator in response_lower for indicator in success_indicators)
+                    has_failure = any(indicator in response_lower for indicator in failure_indicators)
+                    
+                    # If we see success indicators and no failure indicators, consider it successful
+                    if has_success and not has_failure:
+                        successful_logins.append({
+                            'username': username,
+                            'password': password,
+                            'response': (response + final_response).strip()[:200]  # Limit response length
+                        })
+                
+                sock.close()
+                
+            except Exception:
+                pass
+            
+            # Small delay between attempts to avoid overwhelming the server
+            time.sleep(0.2)
+        
+        return successful_logins
+    
+    def check_telnet(self, ip_address: str, port: int = 23, extract_ntlm: bool = False, test_credentials: bool = False) -> dict:
         """
         Check if telnet port is open on the specified IP address
         
         Args:
             ip_address: Target IP address
             port: Port to check (default 23 for telnet)
+            extract_ntlm: Whether to attempt NTLM authentication extraction
+            test_credentials: Whether to test common credentials
             
         Returns:
-            dict with status, banner, error, timing information, and encryption support
+            dict with status, banner, error, timing information, encryption support, NTLM info, and credential test results
         """
         result = {
             'ip': ip_address,
@@ -104,6 +329,8 @@ class TelnetEnumerator:
             'error': None,
             'response_time': None,
             'encryption_support': None,
+            'ntlm_info': None,
+            'credential_results': None,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -144,6 +371,34 @@ class TelnetEnumerator:
             
             sock.close()
             
+            # Attempt NTLM extraction if requested and port is open
+            if extract_ntlm and result['status'] == 'open':
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(self.timeout)
+                    sock.connect((ip_address, port))
+                    ntlm_info = self._extract_ntlm_info(sock)
+                    if ntlm_info:
+                        result['ntlm_info'] = ntlm_info
+                    sock.close()
+                except Exception as e:
+                    if result['error']:
+                        result['error'] += f"; NTLM extraction failed: {str(e)}"
+                    else:
+                        result['error'] = f"NTLM extraction failed: {str(e)}"
+            
+            # Test credentials if requested and port is open
+            if test_credentials and result['status'] == 'open':
+                try:
+                    credential_results = self._test_credentials(ip_address, port, self.DEFAULT_CREDENTIALS)
+                    if credential_results:
+                        result['credential_results'] = credential_results
+                except Exception as e:
+                    if result['error']:
+                        result['error'] += f"; Credential testing failed: {str(e)}"
+                    else:
+                        result['error'] = f"Credential testing failed: {str(e)}"
+            
         except socket.timeout:
             result['status'] = 'timeout'
             result['error'] = 'Connection timeout'
@@ -166,7 +421,7 @@ class TelnetEnumeratorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Telnet Enumerator - Advanced Edition")
-        self.root.geometry("900x700")
+        self.root.geometry("900x750")
         self.root.resizable(True, True)
         
         self.enumerator = TelnetEnumerator()
@@ -174,6 +429,10 @@ class TelnetEnumeratorGUI:
         self.result_queue = queue.Queue()
         self.scan_results = []  # Store all scan results
         self.is_scanning = False
+        
+        # Options for scanning
+        self.extract_ntlm_var = tk.BooleanVar(value=False)
+        self.test_credentials_var = tk.BooleanVar(value=False)
         
         self.setup_ui()
         self.check_queue()
@@ -209,16 +468,37 @@ class TelnetEnumeratorGUI:
         self.timeout_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         self.timeout_entry.insert(0, "3")
         
+        # Options frame for checkboxes
+        options_frame = ttk.LabelFrame(main_frame, text="Scan Options", padding="10")
+        options_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10, padx=5)
+        
+        self.extract_ntlm_checkbox = ttk.Checkbutton(
+            options_frame, 
+            text="Extract NTLM Authentication Details",
+            variable=self.extract_ntlm_var
+        )
+        self.extract_ntlm_checkbox.grid(row=0, column=0, sticky=tk.W, pady=2)
+        
+        self.test_credentials_checkbox = ttk.Checkbutton(
+            options_frame,
+            text="Test Common Credentials",
+            variable=self.test_credentials_var
+        )
+        self.test_credentials_checkbox.grid(row=1, column=0, sticky=tk.W, pady=2)
+        
+        ttk.Label(options_frame, text="⚠️ Credential testing may trigger security alerts", 
+                 font=('Helvetica', 8), foreground='orange').grid(row=2, column=0, sticky=tk.W, pady=2)
+        
         # Progress bar
-        ttk.Label(main_frame, text="Progress:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="Progress:").grid(row=4, column=0, sticky=tk.W, pady=5)
         self.progress_bar = ttk.Progressbar(main_frame, mode='determinate')
-        self.progress_bar.grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.progress_bar.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         self.progress_label = ttk.Label(main_frame, text="0/0")
-        self.progress_label.grid(row=3, column=2, sticky=tk.W, pady=5)
+        self.progress_label.grid(row=4, column=2, sticky=tk.W, pady=5)
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=4, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
         
         self.scan_button = ttk.Button(button_frame, text="Start Scan", command=self.start_scan)
         self.scan_button.grid(row=0, column=0, padx=5)
@@ -233,11 +513,11 @@ class TelnetEnumeratorGUI:
         self.export_button.grid(row=0, column=3, padx=5)
         
         # Results text area
-        ttk.Label(main_frame, text="Results:").grid(row=5, column=0, sticky=(tk.W, tk.N), pady=5)
+        ttk.Label(main_frame, text="Results:").grid(row=6, column=0, sticky=(tk.W, tk.N), pady=5)
         
         self.results_text = scrolledtext.ScrolledText(main_frame, width=90, height=25, 
                                                       wrap=tk.WORD, font=('Courier', 9))
-        self.results_text.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
+        self.results_text.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), 
                               pady=5, padx=5)
         
         # Status bar
@@ -245,7 +525,7 @@ class TelnetEnumeratorGUI:
         self.status_var.set("Ready")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                               relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+        status_bar.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
     
     def validate_inputs(self) -> tuple:
         """Validate user inputs"""
@@ -292,10 +572,14 @@ class TelnetEnumeratorGUI:
         # Update enumerator timeout
         self.enumerator.timeout = timeout
         
+        # Get scan options
+        extract_ntlm = self.extract_ntlm_var.get()
+        test_credentials = self.test_credentials_var.get()
+        
         # Start scan in separate thread
         self.scan_thread = threading.Thread(
             target=self.run_scan,
-            args=(ip_address, port),
+            args=(ip_address, port, extract_ntlm, test_credentials),
             daemon=True
         )
         self.scan_thread.start()
@@ -307,7 +591,7 @@ class TelnetEnumeratorGUI:
         self.scan_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
     
-    def run_scan(self, ip_address: str, port: int):
+    def run_scan(self, ip_address: str, port: int, extract_ntlm: bool, test_credentials: bool):
         """Run the scan in a separate thread"""
         try:
             results = []
@@ -328,7 +612,7 @@ class TelnetEnumeratorGUI:
                     for ip in network.hosts():
                         if not self.is_scanning:
                             break
-                        result = self.enumerator.check_telnet(str(ip), port)
+                        result = self.enumerator.check_telnet(str(ip), port, extract_ntlm, test_credentials)
                         results.append(result)
                         completed_scans += 1
                         self.result_queue.put(('progress', completed_scans, total_scans))
@@ -337,7 +621,7 @@ class TelnetEnumeratorGUI:
                     # Invalid CIDR notation, treat as single IP
                     total_scans = 1
                     self.result_queue.put(('progress', 0, total_scans))
-                    result = self.enumerator.check_telnet(ip_address, port)
+                    result = self.enumerator.check_telnet(ip_address, port, extract_ntlm, test_credentials)
                     results.append(result)
                     completed_scans += 1
                     self.result_queue.put(('progress', completed_scans, total_scans))
@@ -347,7 +631,7 @@ class TelnetEnumeratorGUI:
                 self.result_queue.put(('progress', 0, total_scans))
                 
                 if self.is_scanning:
-                    result = self.enumerator.check_telnet(ip_address, port)
+                    result = self.enumerator.check_telnet(ip_address, port, extract_ntlm, test_credentials)
                     results.append(result)
                     completed_scans += 1
                     self.result_queue.put(('progress', completed_scans, total_scans))
@@ -435,6 +719,37 @@ class TelnetEnumeratorGUI:
                     output.append(f"Encryption:      ⚠️ NOT SUPPORTED")
                 else:
                     output.append(f"Encryption:      ❓ UNKNOWN")
+            
+            # Display NTLM information if available
+            if result.get('ntlm_info'):
+                output.append("\n🔐 NTLM Authentication Details:")
+                output.append("." * 80)
+                ntlm_info = result['ntlm_info']
+                
+                if ntlm_info.get('message_type'):
+                    output.append(f"  Message Type:    {ntlm_info['message_type']}")
+                if ntlm_info.get('target_name'):
+                    output.append(f"  Target Name:     {ntlm_info['target_name']}")
+                if ntlm_info.get('challenge'):
+                    output.append(f"  Challenge:       {ntlm_info['challenge']}")
+                if ntlm_info.get('flags'):
+                    output.append(f"  Flags:           {ntlm_info['flags']}")
+                if ntlm_info.get('version'):
+                    output.append(f"  Version:         {ntlm_info['version']}")
+                
+                output.append("." * 80)
+            
+            # Display credential test results if available
+            if result.get('credential_results'):
+                output.append("\n✅ SUCCESSFUL CREDENTIAL TESTS:")
+                output.append("." * 80)
+                for cred in result['credential_results']:
+                    output.append(f"  Username:        {cred['username']}")
+                    output.append(f"  Password:        {cred['password']}")
+                    if cred.get('response'):
+                        output.append(f"  Response:        {cred['response'][:100]}...")
+                    output.append("  " + "-" * 76)
+                output.append("." * 80)
             
             if result['status'] == 'open':
                 output.append("")
@@ -533,8 +848,24 @@ class TelnetEnumeratorGUI:
                 with open(filename, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(['IP Address', 'Port', 'Status', 'Response Time (ms)', 
-                                   'Encryption Support', 'Banner', 'Error', 'Timestamp'])
+                                   'Encryption Support', 'Banner', 'NTLM Info', 'Successful Credentials', 'Error', 'Timestamp'])
                     for result in self.scan_results:
+                        # Format NTLM info
+                        ntlm_str = 'N/A'
+                        if result.get('ntlm_info'):
+                            ntlm_parts = []
+                            for key, value in result['ntlm_info'].items():
+                                ntlm_parts.append(f"{key}={value}")
+                            ntlm_str = "; ".join(ntlm_parts)
+                        
+                        # Format credential results
+                        cred_str = 'N/A'
+                        if result.get('credential_results'):
+                            cred_parts = []
+                            for cred in result['credential_results']:
+                                cred_parts.append(f"{cred['username']}:{cred['password']}")
+                            cred_str = "; ".join(cred_parts)
+                        
                         writer.writerow([
                             result['ip'],
                             result['port'],
@@ -542,6 +873,8 @@ class TelnetEnumeratorGUI:
                             result.get('response_time', 'N/A'),
                             result.get('encryption_support', 'N/A'),
                             result.get('banner', 'N/A'),
+                            ntlm_str,
+                            cred_str,
                             result.get('error', 'N/A'),
                             result.get('timestamp', 'N/A')
                         ])

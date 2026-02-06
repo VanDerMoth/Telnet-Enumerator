@@ -7,6 +7,8 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 - 🖥️ **User-Friendly GUI**: Built with tkinter for easy cross-platform use
 - 🔍 **IP Range Scanning**: Scan multiple IPs using CIDR notation (e.g., 192.168.1.0/24)
 - 🔒 **Encryption Detection**: Automatically assess Telnet encryption support (RFC 2946)
+- 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
+- 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
 - 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
 - 📊 **Detailed Results**: Comprehensive scan results with timestamps and statistics
@@ -51,17 +53,25 @@ python3 telnet_enumerator.py
    
 2. **Set Timeout**: Connection timeout in seconds (default: 3)
 
-3. **Click Start Scan**: Begin the enumeration
+3. **Enable Scan Options** (Optional):
+   - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
+   - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
+   
+   ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
 
-4. **View Results**: Detailed results appear below with:
+4. **Click Start Scan**: Begin the enumeration
+
+5. **View Results**: Detailed results appear below with:
    - Connection status (Open/Closed/Timeout/Error)
    - Encryption support status (Supported/Not Supported/Unknown)
+   - NTLM authentication details (if extracted)
+   - Successful credential attempts (if tested)
    - Response time in milliseconds
    - Banner information
    - Timestamp
    - Scan statistics summary
 
-5. **Export Results**: Save your scan results in CSV, JSON, or TXT format
+6. **Export Results**: Save your scan results in CSV, JSON, or TXT format
 
 ### Example Scans
 
@@ -69,9 +79,15 @@ python3 telnet_enumerator.py
 - IP: `192.168.1.100`
 - Result: Detailed information about the single host including encryption support
 
-**Multiple IP Scan:**
+**Multiple IP Scan with NTLM Extraction:**
 - IP: `192.168.1.0/24`
-- Result: Scan all 254 hosts in the subnet with progress tracking and encryption detection
+- Options: Enable "Extract NTLM Authentication Details"
+- Result: Scan all 254 hosts in the subnet with progress tracking, encryption detection, and NTLM info
+
+**Single IP with Credential Testing:**
+- IP: `192.168.1.100`
+- Options: Enable "Test Common Credentials"
+- Result: Test 12 commonly used credentials and report successful logins
 
 ### Building Executable
 
@@ -85,12 +101,45 @@ The executable will be created in the `dist/` directory.
 
 ## Advanced Features
 
+### NTLM Authentication Extraction
+
+The tool implements NTLM authentication extraction based on:
+- RFC 2941 (Telnet Authentication Option)
+- Microsoft's MS-TNAP specification
+
+When enabled, the tool attempts to:
+- Negotiate NTLM authentication with the server
+- Extract NTLM Type 2 Challenge messages
+- Parse and display:
+  - Target name (domain)
+  - Challenge value
+  - NTLM flags
+  - Version information
+
+### Credential Testing
+
+Tests the following common default credentials:
+- admin/admin
+- admin/password
+- root/root
+- root/admin
+- admin/1234
+- user/user
+- guest/guest
+- support/support
+- admin/(blank)
+- root/(blank)
+- ubnt/ubnt (Ubiquiti devices)
+- pi/raspberry (Raspberry Pi)
+
+The tool attempts to authenticate and reports successful logins with response snippets.
+
 ### Export Formats
 
 **CSV Export:**
 - Structured data with headers
 - Easy to import into spreadsheets or databases
-- Includes all scan details
+- Includes all scan details including NTLM info and credentials
 
 **JSON Export:**
 - Machine-readable format
@@ -125,7 +174,15 @@ This tool is intended for:
 - ✅ Educational purposes
 - ✅ Network administration
 
-**⚠️ Warning**: Only use this tool on systems you own or have explicit permission to test. Unauthorized port scanning may be illegal in your jurisdiction.
+**⚠️ Warning**: Only use this tool on systems you own or have explicit permission to test. Unauthorized port scanning and credential testing may be illegal in your jurisdiction and may trigger security alerts.
+
+### Responsible Use
+
+- Always obtain proper authorization before testing
+- Be aware that credential testing is noisy and will likely be detected
+- NTLM extraction attempts may be logged by security systems
+- Use appropriate rate limiting to avoid service disruption
+- Follow your organization's security testing policies
 
 ## License
 
