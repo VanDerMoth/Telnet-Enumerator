@@ -567,14 +567,23 @@ class TelnetEnumerator:
                         if self.files_to_view:
                             files_to_try = self.files_to_view
                         elif self.auto_scrub_files:
-                            # Auto-scrub mode: discover ALL text and image files on the system
+                            # Auto-scrub mode: discover text/image files AND include system files
                             try:
+                                # Start with common system files
+                                files_to_try = list(self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES)
+                                
+                                # Add discovered text and image files
                                 discovered = self._discover_files_via_telnet(sock)
                                 if discovered:
-                                    files_to_try = discovered
-                                else:
-                                    # Fallback to common files if discovery fails
-                                    files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
+                                    # Add discovered files that aren't already in the list
+                                    for file_path in discovered:
+                                        if file_path not in files_to_try:
+                                            files_to_try.append(file_path)
+                                
+                                # Limit to MAX_DISCOVERED_FILES to avoid overwhelming output
+                                if len(files_to_try) > self.MAX_DISCOVERED_FILES:
+                                    files_to_try = files_to_try[:self.MAX_DISCOVERED_FILES]
+                                    
                             except Exception:
                                 # Fallback to common files if discovery fails
                                 files_to_try = self.COMMON_LINUX_FILES + self.COMMON_WINDOWS_FILES
@@ -823,7 +832,7 @@ class TelnetEnumeratorGUI:
         # Auto-scrub checkbox
         self.auto_scrub_checkbox = ttk.Checkbutton(
             options_frame,
-            text="  Auto-scrub common files (discovers ALL text/image files, up to 100)",
+            text="  Auto-scrub common files (system files + discovers text/image files, up to 100)",
             variable=self.auto_scrub_var
         )
         self.auto_scrub_checkbox.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
