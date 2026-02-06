@@ -11,6 +11,7 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 - 🔒 **Encryption Detection**: Automatically assess Telnet encryption support (RFC 2946)
 - 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
 - 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
+- 📄 **File Viewing**: View files on the telnet server when valid credentials are found (useful for lateral movement)
 - 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
 - 📊 **Detailed Results**: Comprehensive scan results with timestamps and statistics
@@ -62,6 +63,7 @@ python3 telnet_enumerator.py
 4. **Enable Scan Options** (Optional):
    - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
    - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
+   - **View Files**: When enabled with credential testing, attempts to view specified files on the target system when valid credentials are found
    
    ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
 
@@ -78,6 +80,7 @@ python3 telnet_enumerator.py
    - Encryption support status (Supported/Not Supported/Unknown)
    - NTLM authentication details (if extracted)
    - Successful credential attempts (if tested)
+   - File contents from target system (if file viewing enabled and credentials found)
    - Response time in milliseconds
    - Banner information
    - Timestamp
@@ -111,6 +114,13 @@ python3 telnet_enumerator.py
 - IP: `192.168.1.100`
 - Options: Enable "Test Common Credentials"
 - Result: Test 12 commonly used credentials and report successful logins
+
+**Credential Testing with File Viewing:**
+- IP: `192.168.1.100`
+- Options: Enable "Test Common Credentials" and "View Files"
+- Files: `/etc/passwd,/etc/hosts`
+- Result: Test credentials and automatically view specified files when valid credentials are found
+- Use Case: Quickly gather system information for lateral movement analysis
 
 ### Building Executable
 
@@ -157,17 +167,41 @@ Tests the following common default credentials:
 
 The tool attempts to authenticate and reports successful logins with response snippets.
 
+### File Viewing for Lateral Movement
+
+When valid credentials are discovered during credential testing, the tool can automatically attempt to view files on the target system. This feature is valuable for:
+- **Lateral Movement**: Quickly assess accessible information after gaining credentials
+- **Reconnaissance**: Identify system configuration and sensitive data
+- **Privilege Assessment**: Determine what files the compromised credentials can access
+
+**Configuration:**
+- Enable "View Files" checkbox (requires "Test Common Credentials" to be enabled)
+- Specify file paths to view in the input field (comma-separated)
+- Default paths include: `/etc/passwd`, `/etc/hosts`
+- Common useful paths:
+  - Linux: `/etc/passwd`, `/etc/shadow`, `/etc/hosts`, `/root/.ssh/authorized_keys`, `/home/*/.ssh/authorized_keys`
+  - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Users\Administrator\Desktop\*`
+
+**How it works:**
+1. When credentials successfully authenticate, the tool maintains the telnet session
+2. Attempts to read specified files using common commands (`cat`, `type`, `more`)
+3. Captures file contents (up to 2000 characters per file)
+4. Displays file contents in results along with credential information
+5. Reports errors if files cannot be read (permissions, non-existent, etc.)
+
+⚠️ **Warning**: File viewing is intrusive and will generate logs on the target system. Use only in authorized penetration testing scenarios.
+
 ### Export Formats
 
 **CSV Export:**
 - Structured data with headers
 - Easy to import into spreadsheets or databases
-- Includes all scan details including NTLM info and credentials
+- Includes all scan details including NTLM info, credentials, and viewed files
 
 **JSON Export:**
 - Machine-readable format
 - Perfect for automation and integration
-- Full data structure preservation
+- Full data structure preservation including file contents
 
 **TXT Export:**
 - Human-readable format
@@ -215,12 +249,13 @@ This tool is intended for:
 - ✅ Educational purposes
 - ✅ Network administration
 
-**⚠️ Warning**: Only use this tool on systems you own or have explicit permission to test. Unauthorized port scanning and credential testing may be illegal in your jurisdiction and may trigger security alerts.
+**⚠️ Warning**: Only use this tool on systems you own or have explicit permission to test. Unauthorized port scanning, credential testing, and file access may be illegal in your jurisdiction and may trigger security alerts.
 
 ### Responsible Use
 
 - Always obtain proper authorization before testing
 - Be aware that credential testing is noisy and will likely be detected
+- File viewing operations are logged and highly intrusive - use only in authorized scenarios
 - NTLM extraction attempts may be logged by security systems
 - Use appropriate rate limiting to avoid service disruption
 - Follow your organization's security testing policies
