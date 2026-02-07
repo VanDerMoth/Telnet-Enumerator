@@ -83,91 +83,7 @@ class TelnetEnumerator:
         ('pi', 'raspberry'),
     ]
     
-    # Common files to try to scrub from telnet servers
-    COMMON_LINUX_FILES = [
-        '/etc/passwd',
-        '/etc/hosts',
-        '/etc/hostname',
-        '/etc/issue',
-        '/etc/os-release',
-        '/proc/version',
-        '/proc/cpuinfo',
-        '/etc/ssh/sshd_config',
-        '/etc/network/interfaces',
-        '/root/.ssh/authorized_keys',
-        '/root/.bash_history',
-        # Common CTF text files
-        '/root/flag.txt',
-        '/root/user.txt',
-        '/root/root.txt',
-        '/home/user/flag.txt',
-        '/home/user/user.txt',
-        '/flag.txt',
-        '/user.txt',
-        '/root.txt',
-        'flag.txt',
-        'user.txt',
-        'note.txt',
-        'notes.txt',
-        'readme.txt',
-        'README.txt',
-        'todo.txt',
-        'passwords.txt',
-        'creds.txt',
-        # Common CTF image files (may contain steganography)
-        '/root/flag.jpg',
-        '/root/flag.png',
-        '/home/user/flag.jpg',
-        '/home/user/flag.png',
-        'flag.jpg',
-        'flag.png',
-        'image.jpg',
-        'image.png',
-    ]
-    
-    COMMON_WINDOWS_FILES = [
-        'C:\\Windows\\System32\\drivers\\etc\\hosts',
-        'C:\\Windows\\win.ini',
-        'C:\\boot.ini',
-        # Common CTF text files
-        'C:\\Users\\Administrator\\Desktop\\flag.txt',
-        'C:\\Users\\Administrator\\Desktop\\user.txt',
-        'C:\\Users\\Administrator\\Desktop\\root.txt',
-        'C:\\flag.txt',
-        'C:\\user.txt',
-        'C:\\root.txt',
-        'flag.txt',
-        'user.txt',
-        'note.txt',
-        'notes.txt',
-        'readme.txt',
-        'README.txt',
-        'todo.txt',
-        'passwords.txt',
-        'creds.txt',
-        # Common CTF image files (may contain steganography)
-        'C:\\Users\\Administrator\\Desktop\\flag.jpg',
-        'C:\\Users\\Administrator\\Desktop\\flag.png',
-        'C:\\flag.jpg',
-        'C:\\flag.png',
-        'flag.jpg',
-        'flag.png',
-        'image.jpg',
-        'image.png',
-    ]
-    
-    # File viewing constants
-    MAX_FILE_CONTENT_LENGTH = 2000  # Maximum characters to capture per file
-    FILE_PREVIEW_LENGTH = 500  # Maximum characters to display in preview
-    MAX_PREVIEW_LINES = 10  # Maximum lines to show in file preview
-    BUFFER_CLEAR_TIMEOUT = 0.5  # Timeout for clearing socket buffer (seconds)
-    COMMAND_DELAY = 0.5  # Delay after sending command (seconds)
-    RESPONSE_TIMEOUT = 1.0  # Timeout for receiving response (seconds)
-    MAX_DISCOVERED_FILES = 100  # Maximum number of discovered files to attempt reading
-    
-    # File extensions to search for when discovering files
-    TEXT_EXTENSIONS = ['txt', 'log', 'conf', 'config', 'md', 'csv', 'json', 'xml', 'yaml', 'yml', 'ini', 'sh', 'bat', 'ps1']
-    IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'svg']
+
     
     def __init__(self):
         self.default_port = 23
@@ -178,8 +94,6 @@ class TelnetEnumerator:
         self.jitter_max = 0.0  # Maximum delay between scans (seconds)
         self.randomize_order = False  # Whether to randomize scan order
         self.randomize_source_port = False  # Whether to randomize source port for stealth
-        self.files_to_view = []  # List of file paths to view when credentials are valid
-        self.auto_scrub_files = False  # Whether to automatically discover and view files
     
     def _check_encryption_support(self, sock: socket.socket) -> str:
         """
@@ -364,282 +278,6 @@ class TelnetEnumerator:
         except (struct.error, IndexError, ValueError):
             return None
     
-    def _is_valid_file_path(self, path: str) -> bool:
-        """
-        Check if a string looks like a valid file path
-        
-        Args:
-            path: String to check
-            
-        Returns:
-            True if it looks like a file path, False otherwise
-        """
-        if not path or len(path) < 2:
-            return False
-        
-        # Unix absolute path
-        if path.startswith('/'):
-            return True
-        
-        # Unix relative path
-        if path.startswith('./') or path.startswith('../'):
-            return True
-        
-        # Windows absolute path (e.g., C:\path)
-        if len(path) > 2 and path[1] == ':' and path[2] in ('\\', '/'):
-            return True
-        
-        return False
-    
-    def _discover_files_via_telnet(self, sock: socket.socket) -> List[str]:
-        """
-        Discover text, image files, and directories on the target system through telnet
-        
-        Args:
-            sock: Active authenticated socket connection
-            
-        Returns:
-            List of discovered file paths (up to MAX_DISCOVERED_FILES)
-        """
-        logger.info("Starting file discovery via telnet")
-        discovered_files = []
-        
-        # Combine extensions once for efficiency
-        all_extensions = self.TEXT_EXTENSIONS + self.IMAGE_EXTENSIONS
-        
-        # Build find command for Linux (searches common directories)
-        text_exts = '|'.join([f'\\.{ext}$' for ext in self.TEXT_EXTENSIONS])
-        image_exts = '|'.join([f'\\.{ext}$' for ext in self.IMAGE_EXTENSIONS])
-        all_exts = text_exts + '|' + image_exts
-        
-        # Try multiple discovery strategies
-        # Note: These commands search sensitive directories and assume proper access control
-        # is in place. Errors from inaccessible directories are suppressed with 2>/dev/null
-        discovery_commands = [
-            # Linux: Find files in common directories with more detail (PRIORITIZED)
-            f'find /root /home /tmp /var /opt /etc /usr/local -type f -size -10M 2>/dev/null | grep -E "({all_exts})" | head -n {self.MAX_DISCOVERED_FILES}',
-            # Linux: List all files recursively in home directories
-            'find /root /home -type f -size -10M 2>/dev/null | head -n 100',
-            # Linux: Find recently modified files
-            'find /root /home /tmp -type f -mtime -30 -size -10M 2>/dev/null | head -n 50',
-            # Windows: Search in Users directory
-            f'dir /s /b C:\\Users\\*.txt C:\\Users\\*.jpg C:\\Users\\*.png C:\\Users\\*.gif C:\\Users\\*.log 2>nul | findstr /i ".txt .jpg .png .gif .log" | more +1',
-            # Windows: Desktop and Documents focus
-            f'dir /s /b C:\\Users\\*\\Desktop\\*.* C:\\Users\\*\\Documents\\*.* 2>nul | findstr /i ".txt .jpg .png .gif .log .doc .pdf" | more +1',
-            # Linux: simple ls in common directories (broader search)
-            'ls -1 /root/* /home/*/* /tmp/* 2>/dev/null | grep -E "\\.(txt|jpg|png|gif|log|conf|json|xml)$" | head -n 100',
-            # Current directory recursive search
-            'find . -type f -maxdepth 3 2>/dev/null | head -n 50',
-            # List current directory
-            'ls -la 2>/dev/null || dir 2>nul',
-        ]
-        
-        for cmd_idx, cmd in enumerate(discovery_commands):
-            if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
-                logger.info(f"Reached max discovered files limit ({self.MAX_DISCOVERED_FILES})")
-                break
-                
-            try:
-                logger.debug(f"Attempting discovery command {cmd_idx + 1}/{len(discovery_commands)}: {cmd[:80]}...")
-                
-                # Clear any pending data
-                sock.settimeout(self.BUFFER_CLEAR_TIMEOUT)
-                try:
-                    while sock.recv(4096):
-                        pass
-                except socket.timeout:
-                    pass
-                
-                # Send discovery command
-                sock.sendall((cmd + '\n').encode('utf-8', errors='ignore'))
-                time.sleep(self.COMMAND_DELAY)
-                
-                # Collect response
-                sock.settimeout(self.RESPONSE_TIMEOUT)
-                response = b''
-                try:
-                    for _ in range(20):  # Read multiple chunks for longer output
-                        chunk = sock.recv(4096)
-                        if chunk:
-                            response += chunk
-                        else:
-                            break
-                except socket.timeout:
-                    logger.debug(f"Timeout reading response for command {cmd_idx + 1}")
-                    pass
-                
-                # Parse response to extract file paths
-                if response:
-                    response_text = response.decode('utf-8', errors='ignore')
-                    lines = response_text.split('\n')
-                    logger.debug(f"Command {cmd_idx + 1} returned {len(lines)} lines")
-                    
-                    files_found_in_cmd = 0
-                    for line in lines:
-                        line = line.strip()
-                        # Filter common shell prompts (more comprehensive)
-                        # Skip lines starting with common prompt characters or containing prompt patterns
-                        if not line or line.startswith(('#', '$', '>', '%', '~')):
-                            continue
-                        if ':' in line[:20] and '@' in line[:20]:  # Likely a prompt like 'user@host:~$'
-                            continue
-                            
-                        # Check if line contains valid file extensions
-                        is_valid_file = any(line.lower().endswith(f'.{ext}') for ext in all_extensions)
-                        
-                        if is_valid_file:
-                            # Extract file path - handle paths with spaces by taking everything
-                            # that looks like a valid path (starts with / or C:\ or is relative)
-                            cleaned = line
-                            
-                            # Remove ANSI escape codes if present
-                            import re
-                            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                            cleaned = ansi_escape.sub('', cleaned)
-                            
-                            # If there are spaces and it doesn't start with a path indicator,
-                            # it might be command output with extra info - take last token
-                            if ' ' in cleaned and not self._is_valid_file_path(cleaned):
-                                # This might be output like "Found: /path/to/file.txt"
-                                # Try to extract path-like token
-                                tokens = cleaned.split()
-                                for token in reversed(tokens):  # Check from end
-                                    if any(token.lower().endswith(f'.{ext}') for ext in all_extensions):
-                                        cleaned = token
-                                        break
-                            
-                            if cleaned and cleaned not in discovered_files:
-                                # Validate it's actually a file path using helper function
-                                if self._is_valid_file_path(cleaned):
-                                    discovered_files.append(cleaned)
-                                    files_found_in_cmd += 1
-                                    logger.debug(f"Discovered file: {cleaned}")
-                                    if len(discovered_files) >= self.MAX_DISCOVERED_FILES:
-                                        break
-                    
-                    if files_found_in_cmd > 0:
-                        logger.info(f"Command {cmd_idx + 1} discovered {files_found_in_cmd} files")
-                    else:
-                        logger.debug(f"Command {cmd_idx + 1} discovered no files")
-                else:
-                    logger.debug(f"Command {cmd_idx + 1} returned no response")
-                
-            except Exception as e:
-                # Log the exception but continue to next discovery method
-                logger.warning(f"Exception in discovery command {cmd_idx + 1}: {type(e).__name__}: {e}")
-                logger.debug(f"Traceback: {traceback.format_exc()}")
-                continue
-        
-        logger.info(f"File discovery complete. Total files discovered: {len(discovered_files)}")
-        if discovered_files:
-            logger.debug(f"Discovered files: {discovered_files}")
-        
-        return discovered_files
-    
-    def _view_files_via_telnet(self, sock: socket.socket, files_to_view: List[str]) -> List[Dict]:
-        """
-        View files through an authenticated telnet session
-        
-        Args:
-            sock: Active authenticated socket connection
-            files_to_view: List of file paths to attempt to read
-            
-        Returns:
-            List of dicts containing file path and content
-        """
-        logger.info(f"Starting to view {len(files_to_view)} files via telnet")
-        viewed_files = []
-        
-        for file_idx, file_path in enumerate(files_to_view):
-            logger.debug(f"Attempting to view file {file_idx + 1}/{len(files_to_view)}: {file_path}")
-            try:
-                # Common commands to read files (try multiple for compatibility)
-                commands = [
-                    f'cat {file_path}',
-                    f'type {file_path}',  # Windows
-                    f'more {file_path}',
-                ]
-                
-                file_content = None
-                successful_cmd = None
-                
-                for cmd in commands:
-                    # Clear buffer first
-                    sock.settimeout(self.BUFFER_CLEAR_TIMEOUT)
-                    try:
-                        sock.recv(4096)
-                    except socket.timeout:
-                        pass
-                    
-                    # Send command
-                    sock.settimeout(self.timeout)
-                    sock.send((cmd + '\r\n').encode('utf-8'))
-                    time.sleep(self.COMMAND_DELAY)
-                    
-                    # Receive response
-                    try:
-                        response = b''
-                        sock.settimeout(self.RESPONSE_TIMEOUT)
-                        while True:
-                            try:
-                                chunk = sock.recv(4096)
-                                if not chunk:
-                                    break
-                                response += chunk
-                            except socket.timeout:
-                                break
-                        
-                        content = response.decode('utf-8', errors='ignore').strip()
-                        
-                        # Check if command was successful (not an error message)
-                        error_keywords = [
-                            'no such file', 'cannot open', 'not found', 
-                            'permission denied', 'command not found', 'bad command'
-                        ]
-                        has_error = any(err in content.lower() for err in error_keywords)
-                        
-                        if content and not has_error:
-                            file_content = content
-                            successful_cmd = cmd
-                            logger.debug(f"Successfully read {file_path} using command: {cmd}")
-                            break
-                        elif has_error:
-                            logger.debug(f"Error reading {file_path} with {cmd}: {content[:100]}")
-                    except (socket.error, OSError) as e:
-                        logger.debug(f"Socket error reading {file_path} with {cmd}: {e}")
-                        continue
-                
-                if file_content:
-                    viewed_files.append({
-                        'path': file_path,
-                        'content': file_content[:self.MAX_FILE_CONTENT_LENGTH],
-                        'size': len(file_content)
-                    })
-                    logger.info(f"Successfully viewed file: {file_path} ({len(file_content)} bytes)")
-                else:
-                    error_msg = 'Unable to read file or file not found'
-                    viewed_files.append({
-                        'path': file_path,
-                        'content': None,
-                        'error': error_msg
-                    })
-                    logger.warning(f"Failed to view file: {file_path} - {error_msg}")
-                    
-            except Exception as e:
-                error_msg = f"{type(e).__name__}: {e}"
-                viewed_files.append({
-                    'path': file_path,
-                    'content': None,
-                    'error': error_msg
-                })
-                logger.error(f"Exception viewing file {file_path}: {error_msg}")
-                logger.debug(f"Traceback: {traceback.format_exc()}")
-        
-        success_count = sum(1 for f in viewed_files if f.get('content'))
-        logger.info(f"File viewing complete. Successfully viewed {success_count}/{len(files_to_view)} files")
-        
-        return viewed_files
-    
     def _test_credentials(self, ip_address: str, port: int, credentials: List[Tuple[str, str]]) -> List[Dict]:
         """
         Test a list of credentials against the telnet server
@@ -718,49 +356,6 @@ class TelnetEnumerator:
                             'password': password,
                             'response': (response + final_response).strip()[:200]  # Limit response length
                         }
-                        
-                        # Determine which files to view
-                        files_to_try = []
-                        if self.files_to_view:
-                            files_to_try = self.files_to_view
-                            logger.debug(f"Using {len(files_to_try)} user-specified files to view")
-                        elif self.auto_scrub_files:
-                            # Auto-scrub mode: discover files through directory enumeration
-                            logger.info(f"Auto-discovery mode enabled, discovering files for {ip_address}:{port}")
-                            try:
-                                # Discover files using directory traversal and enumeration
-                                discovered = self._discover_files_via_telnet(sock)
-                                if discovered:
-                                    files_to_try = discovered
-                                    logger.info(f"Discovered {len(discovered)} files to view")
-                                else:
-                                    files_to_try = []
-                                    logger.info("No files discovered")
-                                
-                                # Limit to MAX_DISCOVERED_FILES to avoid overwhelming output
-                                if len(files_to_try) > self.MAX_DISCOVERED_FILES:
-                                    logger.info(f"Limiting discovered files from {len(files_to_try)} to {self.MAX_DISCOVERED_FILES}")
-                                    files_to_try = files_to_try[:self.MAX_DISCOVERED_FILES]
-                                    
-                            except Exception as e:
-                                # If discovery fails, no files to try
-                                logger.warning(f"File discovery failed: {type(e).__name__}: {e}")
-                                logger.debug(f"Traceback: {traceback.format_exc()}")
-                                files_to_try = []
-                        
-                        # If file viewing is enabled and we have files to view, try to read them
-                        if files_to_try:
-                            logger.info(f"Attempting to view {len(files_to_try)} files for {ip_address}:{port}")
-                            try:
-                                viewed_files = self._view_files_via_telnet(sock, files_to_try)
-                                if viewed_files:
-                                    login_result['files_viewed'] = viewed_files
-                            except Exception as e:
-                                # Don't fail the credential test if file viewing fails
-                                error_msg = str(e)
-                                login_result['file_view_error'] = error_msg
-                                logger.error(f"File viewing failed: {error_msg}")
-                                logger.debug(f"Traceback: {traceback.format_exc()}")
                         
                         successful_logins.append(login_result)
                     else:
@@ -951,17 +546,11 @@ class TelnetEnumeratorGUI:
         self.scan_thread = None
         self.result_queue = queue.Queue()
         self.scan_results = []  # Store all scan results
-        self.files_viewed_data = []  # Store all files viewed across all scans
-        self.unfiltered_file_data = []  # Store unfiltered file data for filtering
-        self._file_data_map = {}  # Map tree item IDs to file data
         self.is_scanning = False
-        self._filter_after_id = None  # For debouncing filter updates
         
         # Options for scanning
         self.extract_ntlm_var = tk.BooleanVar(value=False)
         self.test_credentials_var = tk.BooleanVar(value=False)
-        self.view_files_var = tk.BooleanVar(value=False)
-        self.auto_scrub_var = tk.BooleanVar(value=False)
         self.randomize_order_var = tk.BooleanVar(value=False)
         self.use_jitter_var = tk.BooleanVar(value=False)
         
@@ -1024,30 +613,8 @@ class TelnetEnumeratorGUI:
         )
         self.test_credentials_checkbox.grid(row=1, column=0, sticky=tk.W, pady=2)
         
-        self.view_files_checkbox = ttk.Checkbutton(
-            options_frame,
-            text="View Files (requires credential testing)",
-            variable=self.view_files_var
-        )
-        self.view_files_checkbox.grid(row=2, column=0, sticky=tk.W, pady=2)
-        
-        # Auto-scrub checkbox
-        self.auto_scrub_checkbox = ttk.Checkbutton(
-            options_frame,
-            text="  Auto-discover and view files (discovers text/image files through enumeration, up to 100)",
-            variable=self.auto_scrub_var
-        )
-        self.auto_scrub_checkbox.grid(row=3, column=0, sticky=tk.W, pady=2, padx=(20, 0))
-        
-        # File paths input
-        ttk.Label(options_frame, text="  Or specify custom files to view (comma-separated):", 
-                 font=('Helvetica', 8)).grid(row=4, column=0, sticky=tk.W, pady=2)
-        self.files_entry = ttk.Entry(options_frame, width=60)
-        self.files_entry.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2, padx=(20, 0))
-        self.files_entry.insert(0, "/etc/passwd,/etc/hosts")
-        
         ttk.Label(options_frame, text="⚠️ Credential testing may trigger security alerts", 
-                 font=('Helvetica', 8), foreground='orange').grid(row=6, column=0, sticky=tk.W, pady=2)
+                 font=('Helvetica', 8), foreground='orange').grid(row=2, column=0, sticky=tk.W, pady=2)
         
         # Stealth options
         stealth_frame = ttk.LabelFrame(main_frame, text="Stealth Options (Less Detectable)", padding="10")
@@ -1108,101 +675,6 @@ class TelnetEnumeratorGUI:
         self.results_text = scrolledtext.ScrolledText(main_results_frame, width=90, height=25, 
                                                       wrap=tk.WORD, font=('Courier', 9))
         self.results_text.pack(fill=tk.BOTH, expand=True)
-        
-        # Files viewed tab - Enhanced file/folder/path viewer
-        files_viewed_frame = ttk.Frame(self.notebook)
-        self.notebook.add(files_viewed_frame, text="Files Viewed")
-        
-        # Create PanedWindow for split view
-        files_paned = ttk.PanedWindow(files_viewed_frame, orient=tk.HORIZONTAL)
-        files_paned.pack(fill=tk.BOTH, expand=True)
-        
-        # Left panel: File tree with search/filter
-        left_frame = ttk.Frame(files_paned)
-        files_paned.add(left_frame, weight=1)
-        
-        # Search/Filter controls
-        search_frame = ttk.Frame(left_frame)
-        search_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Label(search_frame, text="Filter:").pack(side=tk.LEFT)
-        self.file_filter_var = tk.StringVar()
-        self.file_filter_var.trace('w', lambda *args: self._debounced_filter())
-        filter_entry = ttk.Entry(search_frame, textvariable=self.file_filter_var)
-        filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        
-        # Clear filter button
-        ttk.Button(search_frame, text="Clear", width=8, 
-                   command=lambda: self.file_filter_var.set("")).pack(side=tk.LEFT)
-        
-        # Status filter dropdown
-        ttk.Label(search_frame, text="Status:").pack(side=tk.LEFT, padx=(10, 0))
-        self.status_filter_var = tk.StringVar(value="All")
-        status_combo = ttk.Combobox(search_frame, textvariable=self.status_filter_var, 
-                                    values=["All", "Success", "Error", "Not Found"], 
-                                    state="readonly", width=12)
-        status_combo.pack(side=tk.LEFT, padx=5)
-        status_combo.bind('<<ComboboxSelected>>', lambda e: self.filter_file_tree())
-        
-        # Tree frame with scrollbar
-        tree_frame = ttk.Frame(left_frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # File tree with columns
-        columns = ('status', 'size', 'target')
-        self.file_tree = ttk.Treeview(tree_frame, columns=columns, show='tree headings')
-        
-        # Configure columns
-        self.file_tree.heading('#0', text='Path', anchor=tk.W)
-        self.file_tree.heading('status', text='Status', anchor=tk.CENTER)
-        self.file_tree.heading('size', text='Size', anchor=tk.E)
-        self.file_tree.heading('target', text='Target', anchor=tk.W)
-        
-        self.file_tree.column('#0', width=300, minwidth=200)
-        self.file_tree.column('status', width=80, minwidth=60)
-        self.file_tree.column('size', width=80, minwidth=60)
-        self.file_tree.column('target', width=150, minwidth=100)
-        
-        # Scrollbars for tree
-        tree_vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.file_tree.yview)
-        tree_hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.file_tree.xview)
-        self.file_tree.configure(yscrollcommand=tree_vsb.set, xscrollcommand=tree_hsb.set)
-        
-        # Grid layout for tree and scrollbars
-        self.file_tree.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.E, tk.W))
-        tree_vsb.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        tree_hsb.grid(row=1, column=0, sticky=(tk.E, tk.W))
-        tree_frame.rowconfigure(0, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
-        
-        # Configure tags for status colors
-        self.file_tree.tag_configure('success', foreground='#006400')  # Dark green
-        self.file_tree.tag_configure('error', foreground='#B22222')  # Fire brick red
-        self.file_tree.tag_configure('notfound', foreground='#FF8C00')  # Dark orange
-        self.file_tree.tag_configure('folder', font=('TkDefaultFont', 9, 'bold'))
-        
-        # Bind selection event
-        self.file_tree.bind('<<TreeviewSelect>>', self.on_file_selected)
-        
-        # Right panel: File content viewer
-        right_frame = ttk.Frame(files_paned)
-        files_paned.add(right_frame, weight=2)
-        
-        # Content header
-        content_header = ttk.Frame(right_frame)
-        content_header.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Label(content_header, text="File Content:", 
-                  font=('TkDefaultFont', 10, 'bold')).pack(side=tk.LEFT)
-        
-        self.content_info_label = ttk.Label(content_header, text="Select a file to view", 
-                                           foreground='gray')
-        self.content_info_label.pack(side=tk.LEFT, padx=10)
-        
-        # Content viewer with scrollbar
-        self.files_text = scrolledtext.ScrolledText(right_frame, width=50, height=25, 
-                                                    wrap=tk.WORD, font=('Courier', 9))
-        self.files_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Status bar with log file reference
         status_frame = ttk.Frame(main_frame)
@@ -1287,32 +759,8 @@ class TelnetEnumeratorGUI:
         # Get scan options
         extract_ntlm = self.extract_ntlm_var.get()
         test_credentials = self.test_credentials_var.get()
-        view_files = self.view_files_var.get()
-        auto_scrub = self.auto_scrub_var.get()
         
-        logger.info(f"Scan options: NTLM={extract_ntlm}, Credentials={test_credentials}, "
-                   f"ViewFiles={view_files}, AutoDiscovery={auto_scrub}")
-        
-        # Get file paths to view
-        files_to_view = []
-        if view_files and test_credentials:
-            if auto_scrub:
-                # Auto-discover mode: will discover files through enumeration
-                self.enumerator.auto_scrub_files = True
-                self.enumerator.files_to_view = []
-                logger.info("File viewing mode: Auto-discovery enabled")
-            else:
-                # Manual mode: use specified files
-                self.enumerator.auto_scrub_files = False
-                files_str = self.files_entry.get().strip()
-                if files_str:
-                    files_to_view = [f.strip() for f in files_str.split(',') if f.strip()]
-                self.enumerator.files_to_view = files_to_view
-                logger.info(f"File viewing mode: Manual - {len(files_to_view)} files specified")
-        else:
-            self.enumerator.auto_scrub_files = False
-            self.enumerator.files_to_view = []
-            logger.info("File viewing: Disabled")
+        logger.info(f"Scan options: NTLM={extract_ntlm}, Credentials={test_credentials}")
         
         # Get stealth options
         randomize_order = self.randomize_order_var.get()
@@ -1545,42 +993,6 @@ class TelnetEnumeratorGUI:
                     if cred.get('response'):
                         output.append(f"  Response:        {cred['response'][:100]}...")
                     
-                    # Display summary of viewed files if available
-                    if cred.get('files_viewed'):
-                        num_files = len(cred['files_viewed'])
-                        num_success = sum(1 for f in cred['files_viewed'] if f.get('content'))
-                        num_errors = sum(1 for f in cred['files_viewed'] if f.get('error'))
-                        num_not_found = sum(1 for f in cred['files_viewed'] if f.get('error') and 
-                                          ('not found' in f.get('error', '').lower() or 
-                                           'no such file' in f.get('error', '').lower()))
-                        
-                        output.append(f"\n  📄 FILES VIEWED: {num_success}/{num_files} files successfully read")
-                        if num_not_found > 0:
-                            output.append(f"     ⚠️  {num_not_found} file(s) not found")
-                        if num_errors - num_not_found > 0:
-                            output.append(f"     ❌ {num_errors - num_not_found} file(s) had errors")
-                        output.append(f"     (See 'Files Viewed' tab for full content and details)")
-                        
-                        # Log the file viewing summary
-                        logger.info(f"Files viewed for {result['ip']}:{result['port']} - "
-                                  f"Success: {num_success}, Not Found: {num_not_found}, "
-                                  f"Errors: {num_errors - num_not_found}")
-                        
-                        # Store file data for the Files Viewed tab
-                        for file_info in cred['files_viewed']:
-                            file_data = {
-                                'ip': result['ip'],
-                                'port': result['port'],
-                                'username': cred['username'],
-                                'password': cred['password'],
-                                'timestamp': result['timestamp'],
-                                'file_info': file_info
-                            }
-                            self.files_viewed_data.append(file_data)
-                    
-                    if cred.get('file_view_error'):
-                        output.append(f"  File View Error: {cred['file_view_error']}")
-                    
                     output.append("  " + "-" * 76)
                 output.append("." * 80)
             
@@ -1619,254 +1031,6 @@ class TelnetEnumeratorGUI:
         output.append("")
         
         self.append_result("\n".join(output))
-        
-        # Update the Files Viewed tab if any files were viewed
-        self.update_files_tab()
-    
-    def update_files_tab(self):
-        """Update the Files Viewed tab with hierarchical file tree and content viewer"""
-        # Clear existing tree
-        for item in self.file_tree.get_children():
-            self.file_tree.delete(item)
-        
-        # Clear the file data map to prevent stale item ID references
-        self._file_data_map.clear()
-        
-        # Clear content viewer
-        self.files_text.delete(1.0, tk.END)
-        self.content_info_label.config(text="Select a file to view")
-        
-        if not self.files_viewed_data:
-            self.files_text.insert(tk.END, "No files have been viewed yet.\n\n")
-            self.files_text.insert(tk.END, "Enable 'View Files' and 'Test Common Credentials' options\n")
-            self.files_text.insert(tk.END, "to automatically view files when valid credentials are found.\n\n")
-            self.files_text.insert(tk.END, "Tip: Enable 'Auto-discover files' to automatically find and view files\n")
-            self.files_text.insert(tk.END, "on the target system, or specify custom file paths to view.")
-            logger.debug("Files Viewed tab updated - no files to display")
-            return
-        
-        # Store unfiltered data
-        self.unfiltered_file_data = list(self.files_viewed_data)
-        
-        # Calculate statistics
-        total_files = len(self.files_viewed_data)
-        successful = sum(1 for f in self.files_viewed_data if f['file_info'].get('content'))
-        errors = sum(1 for f in self.files_viewed_data if f['file_info'].get('error'))
-        
-        logger.info(f"Files Viewed tab updated - Total: {total_files}, Success: {successful}, Errors: {errors}")
-        
-        # Build hierarchical tree structure
-        self._populate_file_tree(self.files_viewed_data)
-    
-    def _populate_file_tree(self, file_data_list):
-        """Populate the file tree with hierarchical structure"""
-        # Group files by target and directory
-        tree_structure = {}
-        
-        for file_data in file_data_list:
-            target = f"{file_data['ip']}:{file_data['port']}"
-            file_path = file_data['file_info']['path']
-            
-            # Initialize target if not exists
-            if target not in tree_structure:
-                tree_structure[target] = {}
-            
-            # Parse file path into directory components
-            if file_path.startswith('/'):
-                # Unix-like path
-                parts = file_path.split('/')
-            elif len(file_path) > 2 and file_path[1] == ':':
-                # Windows path
-                parts = file_path.replace('\\', '/').split('/')
-            else:
-                # Relative path
-                parts = file_path.replace('\\', '/').split('/')
-            
-            # Build nested structure
-            current_level = tree_structure[target]
-            for i, part in enumerate(parts[:-1]):
-                if part == '':
-                    part = '/' if i == 0 else part
-                if part not in current_level:
-                    current_level[part] = {}
-                current_level = current_level[part]
-            
-            # Add the file at the leaf
-            filename = parts[-1]
-            current_level[filename] = file_data
-        
-        # Populate tree widget
-        for target, dirs in sorted(tree_structure.items()):
-            # Add target as root node
-            target_node = self.file_tree.insert('', 'end', text=target, 
-                                                tags=('folder',), open=True)
-            self._add_tree_nodes(target_node, dirs)
-    
-    def _add_tree_nodes(self, parent, structure):
-        """Recursively add nodes to the tree"""
-        for name, content in sorted(structure.items()):
-            if isinstance(content, dict) and not content.get('file_info'):
-                # This is a directory
-                node = self.file_tree.insert(parent, 'end', text=name, 
-                                            tags=('folder',), open=False)
-                self._add_tree_nodes(node, content)
-            else:
-                # This is a file
-                file_info = content['file_info']
-                
-                # Determine status
-                if file_info.get('content'):
-                    status = '✓ Success'
-                    status_tag = 'success'
-                    size = f"{file_info.get('size', 0)} B"
-                elif file_info.get('error'):
-                    if 'not found' in file_info['error'].lower() or 'no such file' in file_info['error'].lower():
-                        status = '✗ Not Found'
-                        status_tag = 'notfound'
-                    else:
-                        status = '✗ Error'
-                        status_tag = 'error'
-                    size = '-'
-                else:
-                    status = '? Unknown'
-                    status_tag = 'error'
-                    size = '-'
-                
-                target_str = f"{content['ip']}:{content['port']}"
-                
-                # Insert file node with data
-                node = self.file_tree.insert(parent, 'end', text=name,
-                                            values=(status, size, target_str),
-                                            tags=(status_tag,))
-                # Store file data in item for retrieval on selection
-                self.file_tree.set(node, '#0', name)
-                # Store the full file data for retrieval on selection
-                self._file_data_map[node] = content
-    
-    def on_file_selected(self, event):
-        """Handle file selection in tree"""
-        selection = self.file_tree.selection()
-        if not selection:
-            return
-        
-        item_id = selection[0]
-        
-        # Check if this is a file (not a folder)
-        if not hasattr(self, '_file_data_map') or item_id not in self._file_data_map:
-            # It's a folder, clear content
-            self.files_text.delete(1.0, tk.END)
-            self.files_text.insert(tk.END, "Select a file to view its content.")
-            self.content_info_label.config(text="Folder selected")
-            return
-        
-        file_data = self._file_data_map[item_id]
-        file_info = file_data['file_info']
-        
-        # Update content viewer
-        self.files_text.delete(1.0, tk.END)
-        
-        # Display file metadata
-        output = []
-        output.append("=" * 80)
-        output.append("FILE DETAILS")
-        output.append("=" * 80)
-        output.append(f"Target:          {file_data['ip']}:{file_data['port']}")
-        output.append(f"Credentials:     {file_data['username']}:{file_data['password']}")
-        output.append(f"Timestamp:       {file_data['timestamp']}")
-        output.append(f"File Path:       {file_info['path']}")
-        
-        if file_info.get('content'):
-            output.append(f"File Size:       {file_info.get('size', 0)} bytes")
-            output.append(f"Status:          ✓ Successfully retrieved")
-            output.append("=" * 80)
-            output.append("\nFILE CONTENT:")
-            output.append("-" * 80)
-            output.append(file_info['content'])
-            output.append("-" * 80)
-            
-            self.content_info_label.config(
-                text=f"{file_info['path']} ({file_info.get('size', 0)} bytes)",
-                foreground='green'
-            )
-        elif file_info.get('error'):
-            output.append(f"Status:          ✗ Error")
-            output.append(f"Error Message:   {file_info['error']}")
-            output.append("=" * 80)
-            
-            self.content_info_label.config(
-                text=f"{file_info['path']} - Error",
-                foreground='red'
-            )
-        else:
-            output.append(f"Status:          ? Unknown")
-            output.append("=" * 80)
-            
-            self.content_info_label.config(
-                text=f"{file_info['path']} - Unknown status",
-                foreground='orange'
-            )
-        
-        self.files_text.insert(tk.END, "\n".join(output))
-        self.files_text.see(1.0)
-    
-    def _debounced_filter(self):
-        """Debounce filter updates to avoid performance issues with large file lists"""
-        # Cancel pending filter update if exists
-        if self._filter_after_id is not None:
-            self.root.after_cancel(self._filter_after_id)
-        
-        # Schedule new filter update after 300ms delay
-        self._filter_after_id = self.root.after(300, self.filter_file_tree)
-    
-    def filter_file_tree(self):
-        """Filter the file tree based on search text and status"""
-        filter_text = self.file_filter_var.get().lower()
-        status_filter = self.status_filter_var.get()
-        
-        # Apply filters to the data
-        filtered_data = []
-        for file_data in self.unfiltered_file_data:
-            file_path = file_data['file_info']['path']
-            file_info = file_data['file_info']
-            
-            # Check text filter
-            if filter_text and filter_text not in file_path.lower():
-                continue
-            
-            # Check status filter
-            if status_filter != "All":
-                if status_filter == "Success" and not file_info.get('content'):
-                    continue
-                elif status_filter == "Error":
-                    if not file_info.get('error'):
-                        continue
-                    if 'not found' in file_info.get('error', '').lower():
-                        continue
-                elif status_filter == "Not Found":
-                    if not file_info.get('error'):
-                        continue
-                    if 'not found' not in file_info.get('error', '').lower():
-                        continue
-            
-            filtered_data.append(file_data)
-        
-        # Clear and repopulate tree
-        for item in self.file_tree.get_children():
-            self.file_tree.delete(item)
-        
-        if not hasattr(self, '_file_data_map'):
-            self._file_data_map = {}
-        else:
-            self._file_data_map.clear()
-        
-        if filtered_data:
-            self._populate_file_tree(filtered_data)
-        else:
-            # Show "no results" message in content viewer
-            self.files_text.delete(1.0, tk.END)
-            self.files_text.insert(tk.END, "No files match the current filter.")
-            self.content_info_label.config(text="No matching files")
-    
     
     def append_result(self, text: str):
         """Append text to results area"""
@@ -1876,21 +1040,11 @@ class TelnetEnumeratorGUI:
     def clear_results(self):
         """Clear the results text area"""
         self.results_text.delete(1.0, tk.END)
-        self.files_text.delete(1.0, tk.END)
         self.scan_results = []
-        self.files_viewed_data = []
-        self.unfiltered_file_data = []
-        self._file_data_map.clear()
-        
-        # Clear the file tree
-        for item in self.file_tree.get_children():
-            self.file_tree.delete(item)
         
         self.progress_bar['value'] = 0
         self.progress_label.config(text="0/0")
         self.status_var.set("Ready")
-        self.content_info_label.config(text="Select a file to view")
-        self.update_files_tab()  # Reset the files tab to show "no files" message
     
     def export_results(self):
         """Export scan results to file"""
@@ -1940,7 +1094,7 @@ class TelnetEnumeratorGUI:
                 with open(filename, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(['IP Address', 'Port', 'Status', 'Response Time (ms)', 
-                                   'Encryption Support', 'Banner', 'NTLM Info', 'Successful Credentials', 'Files Viewed', 'Error', 'Timestamp'])
+                                   'Encryption Support', 'Banner', 'NTLM Info', 'Successful Credentials', 'Error', 'Timestamp'])
                     for result in self.scan_results:
                         # Format NTLM info
                         ntlm_str = 'N/A'
@@ -1952,22 +1106,11 @@ class TelnetEnumeratorGUI:
                         
                         # Format credential results
                         cred_str = 'N/A'
-                        files_str = 'N/A'
                         if result.get('credential_results'):
                             cred_parts = []
-                            file_parts = []
                             for cred in result['credential_results']:
                                 cred_parts.append(f"{cred['username']}:{cred['password']}")
-                                # Add file viewing info
-                                if cred.get('files_viewed'):
-                                    for file_info in cred['files_viewed']:
-                                        if file_info.get('content'):
-                                            file_parts.append(f"{file_info['path']} ({file_info.get('size', 0)} bytes)")
-                                        else:
-                                            file_parts.append(f"{file_info['path']} (error)")
                             cred_str = "; ".join(cred_parts)
-                            if file_parts:
-                                files_str = "; ".join(file_parts)
                         
                         writer.writerow([
                             result['ip'],
@@ -1978,7 +1121,6 @@ class TelnetEnumeratorGUI:
                             result.get('banner', 'N/A'),
                             ntlm_str,
                             cred_str,
-                            files_str,
                             result.get('error', 'N/A'),
                             result.get('timestamp', 'N/A')
                         ])

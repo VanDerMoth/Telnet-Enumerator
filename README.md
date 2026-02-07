@@ -11,9 +11,6 @@ A GUI-based Telnet port enumeration tool for penetration testing and security as
 - 🔒 **Encryption Detection**: Automatically assess Telnet encryption support (RFC 2946)
 - 🔐 **NTLM Authentication Extraction**: Extract NTLM authentication details from telnet servers (RFC 2941, MS-TNAP)
 - 🔑 **Credential Testing**: Test commonly used default credentials against telnet services
-- 📄 **File Viewing**: View files on the telnet server when valid credentials are found (useful for lateral movement)
-- 🔎 **Auto File Discovery**: Automatically discover and enumerate text/image files (up to 100) through directory enumeration when credentials are found
-- 📑 **Tabbed Interface**: Separate tabs for scan results and file contents to prevent clutter
 - 📋 **Banner Grabbing**: Capture and display telnet service banners
 - ⏱️ **Response Time Measurement**: Track connection response times in milliseconds
 - 📊 **Detailed Results**: Comprehensive scan results with timestamps and statistics
@@ -65,9 +62,6 @@ python3 telnet_enumerator.py
 4. **Enable Scan Options** (Optional):
    - **Extract NTLM Authentication Details**: Attempts to extract NTLM challenge information from the telnet server
    - **Test Common Credentials**: Tests commonly used default credentials (admin/admin, root/root, etc.)
-   - **View Files**: When enabled with credential testing, attempts to view files on the target system when valid credentials are found
-     - **Auto-discover files**: Automatically discovers text/image files through directory enumeration (up to 100 files)
-     - **Custom files**: Specify your own comma-separated list of files to view
    
    ⚠️ **Warning**: Credential testing may trigger security alerts and IDS/IPS systems
 
@@ -79,16 +73,11 @@ python3 telnet_enumerator.py
 
 6. **Click Start Scan**: Begin the enumeration
 
-7. **View Results**: Results are displayed in two tabs:
-   - **Main Results Tab**: Shows scan results with connection status, encryption support, NTLM details, successful credentials, and file view summaries
-   - **Files Viewed Tab**: Shows complete contents of all files retrieved from targets (when credentials are found)
-   
-   Main results include:
+7. **View Results**: Results are displayed in the Main Results tab, showing:
    - Connection status (Open/Closed/Timeout/Error)
    - Encryption support status (Supported/Not Supported/Unknown)
    - NTLM authentication details (if extracted)
    - Successful credential attempts (if tested)
-   - File view summary with count (full content in Files Viewed tab)
    - Response time in milliseconds
    - Banner information
    - Timestamp
@@ -122,13 +111,6 @@ python3 telnet_enumerator.py
 - IP: `192.168.1.100`
 - Options: Enable "Test Common Credentials"
 - Result: Test 12 commonly used credentials and report successful logins
-
-**Credential Testing with File Viewing:**
-- IP: `192.168.1.100`
-- Options: Enable "Test Common Credentials" and "View Files"
-- Files: `/etc/passwd,/etc/hosts`
-- Result: Test credentials and automatically view specified files when valid credentials are found
-- Use Case: Quickly gather system information for lateral movement analysis
 
 ### Building Executable
 
@@ -175,79 +157,17 @@ Tests the following common default credentials:
 
 The tool attempts to authenticate and reports successful logins with response snippets.
 
-### File Viewing and Auto-Discovery for Lateral Movement
-
-When valid credentials are discovered during credential testing, the tool can automatically attempt to view files on the target system. This feature is valuable for:
-- **Lateral Movement**: Quickly assess accessible information after gaining credentials
-- **Reconnaissance**: Identify system configuration and sensitive data
-- **Privilege Assessment**: Determine what files the compromised credentials can access
-
-**Configuration Options:**
-1. **Manual File Selection** (Default):
-   - Enable "View Files" checkbox (requires "Test Common Credentials" to be enabled)
-   - Specify file paths to view in the input field (comma-separated)
-   - Default paths include: `/etc/passwd`, `/etc/hosts`
-   - Common useful paths:
-     - Linux: `/etc/passwd`, `/etc/shadow`, `/etc/hosts`, `/root/.ssh/authorized_keys`, `/home/*/.ssh/authorized_keys`
-     - Windows: `C:\Windows\System32\drivers\etc\hosts`, `C:\Users\Administrator\Desktop\*`
-
-2. **Auto-Discovery Mode**:
-   - Enable "View Files" and "Auto-discover files" checkboxes
-   - Automatically discovers and reads files through directory enumeration (up to 100 files)
-   - **File discovery process**:
-     - Text files: `.txt`, `.log`, `.conf`, `.config`, `.md`, `.csv`, `.json`, `.xml`, `.yaml`, `.yml`, `.ini`, `.sh`, `.bat`, `.ps1`
-     - Image files: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.svg`
-   - **Comprehensive discovery**:
-     - Linux: Uses `find` commands to search entire filesystem and common directories (`/root`, `/home`, `/tmp`, `/var`, `/opt`, `/etc`, `/usr/local`)
-     - Windows: Uses `dir` commands to search all drives, user directories, Desktop and Documents folders
-     - Searches for files under 10MB in size
-     - Includes recently modified files (last 30 days)
-     - Searches current directory and subdirectories
-   - Ideal for CTF scenarios and thorough reconnaissance where you want to discover what's accessible
-
-**How it works:**
-1. When credentials successfully authenticate, the tool maintains the telnet session
-2. Attempts to read specified or common files using standard commands (`cat`, `type`, `more`)
-3. Captures file contents (up to 2000 characters per file)
-4. Main Results tab shows file count summary
-5. Files Viewed tab displays files in a hierarchical tree structure organized by target and directory
-6. Reports errors if files cannot be read (permissions, non-existent, etc.)
-
-**Enhanced File/Folder/Path Viewer:**
-- **Main Results Tab**: Shows credential success and file view summary (e.g., "3/5 files successfully read")
-- **Files Viewed Tab**: Advanced file browser with hierarchical tree view
-  - **Tree View (Left Panel)**: 
-    - Organized by target (IP:port) → directory hierarchy → files
-    - Expandable folders for easy navigation
-    - Color-coded status indicators (✓ Success, ✗ Error, ✗ Not Found)
-    - Shows file size and target for each file
-  - **Content Viewer (Right Panel)**:
-    - Displays full file content when selected
-    - Shows file metadata (target, credentials, timestamp, size)
-    - Clear error messages for failed reads
-  - **Search & Filter**:
-    - Text filter: Search files by path name
-    - Status filter: Show only Success/Error/Not Found files
-    - Real-time filtering as you type
-  - **Benefits**: 
-    - Easy to navigate large numbers of files
-    - Quickly identify which files were successfully read
-    - Find specific files or directories instantly
-    - Better overview of the file system structure
-
-⚠️ **Warning**: File viewing is intrusive and will generate logs on the target system. Use only in authorized penetration testing scenarios.
-
 ### Export Formats
 
 **CSV Export:**
 - Structured data with headers
 - Easy to import into spreadsheets or databases
-- Includes all scan details including NTLM info, credentials, and viewed files
+- Includes all scan details including NTLM info and credentials
 
 **JSON Export:**
 - Machine-readable format
 - Perfect for automation and integration
-- Full data structure preservation including file contents
+- Full data structure preservation
 
 **TXT Export:**
 - Human-readable format
@@ -301,7 +221,6 @@ This tool is intended for:
 
 - Always obtain proper authorization before testing
 - Be aware that credential testing is noisy and will likely be detected
-- File viewing operations are logged and highly intrusive - use only in authorized scenarios
 - NTLM extraction attempts may be logged by security systems
 - Use appropriate rate limiting to avoid service disruption
 - Follow your organization's security testing policies
